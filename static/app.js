@@ -399,8 +399,55 @@ function renderModalActions(p) {
   if (p.person_url) {
     parts.push(`<a class="ghost small modal-action" href="${esc(p.person_url)}" target="_blank" rel="noopener">Open on allabolag</a>`);
   }
-  parts.push(`<a class="ghost small modal-action" href="${googleSearchUrl(p.name)}" target="_blank" rel="noopener">Google person</a>`);
+  parts.push(`<a class="ghost small modal-action" href="${googleSearchUrl((p.name || "") + " sweden")}" target="_blank" rel="noopener">Google person</a>`);
   return `<div class="person-modal-actions">${parts.join("")}</div>`;
+}
+
+function stripUrlScheme(url) {
+  return String(url || "").replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
+}
+
+function renderPersonIntel(intel) {
+  const rows = [];
+  if (intel.linkedin_url) {
+    rows.push(`<div class="intel-row"><span class="intel-k">LinkedIn</span><a href="${esc(intel.linkedin_url)}" target="_blank" rel="noopener">${esc(stripUrlScheme(intel.linkedin_url))}</a>${confidenceBadge(intel.linkedin_confidence)}</div>`);
+  }
+  if (intel.instagram_url) {
+    rows.push(`<div class="intel-row"><span class="intel-k">Instagram</span><a href="${esc(intel.instagram_url)}" target="_blank" rel="noopener">${esc(stripUrlScheme(intel.instagram_url))}</a>${confidenceBadge(intel.instagram_confidence)}</div>`);
+  }
+  const socials = intel.socials || {};
+  const extra = Object.entries(socials)
+    .filter(([k]) => k !== "linkedin" && k !== "instagram")
+    .map(([k, v]) => `<a class="intel-social" href="${esc(v)}" target="_blank" rel="noopener">${esc(k)}</a>`)
+    .join("");
+  if (extra) {
+    rows.push(`<div class="intel-row"><span class="intel-k">Social</span><span class="intel-socials">${extra}</span></div>`);
+  }
+  if (intel.headline) {
+    rows.push(`<div class="intel-row intel-about"><span class="intel-k">Headline</span><span>${esc(intel.headline)}</span></div>`);
+  }
+  if (!rows.length) {
+    return `<p class="muted">No personal profiles confirmed yet. Deep-enrichment keeps retrying favorites automatically.</p>`;
+  }
+  return `<div class="company-intel person-intel">${rows.join("")}</div>`;
+}
+
+function renderPersonIntelSection(p) {
+  let inner;
+  if (p.intel) {
+    inner = renderPersonIntel(p.intel);
+  } else if (p.is_favorite) {
+    inner = `<p class="muted">Searching the web for personal profiles… deep-enrichment retries automatically.</p>`;
+  } else {
+    inner = `<p class="muted">Add this person to favorites to automatically extract their personal profiles (LinkedIn, Instagram, …).</p>`;
+  }
+  const via = p.intel && p.intel.search_provider ? ` <small>via ${esc(p.intel.search_provider)}</small>` : "";
+  return `
+    <section class="person-modal-section">
+      <h3>Personal profiles${via}</h3>
+      ${inner}
+    </section>
+  `;
 }
 
 function confidenceBadge(level) {
@@ -521,6 +568,8 @@ function renderPersonModalContent(p) {
     wireModalActions(p);
     return;
   }
+
+  body += renderPersonIntelSection(p);
 
   body += `
     <section class="person-modal-section">

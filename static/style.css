@@ -1181,3 +1181,8 @@ body.modal-open {
 .conf-badge.hi { background: rgba(46, 204, 113, 0.18); color: #2ecc71; }
 .conf-badge.mid { background: rgba(241, 196, 15, 0.18); color: #f1c40f; }
 .conf-badge.lo { background: rgba(231, 76, 60, 0.18); color: #e74c3c; }
+
+.person-intel {
+  margin-top: 0;
+  background: rgba(99, 102, 241, 0.07);
+}

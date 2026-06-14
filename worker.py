@@ -10,6 +10,7 @@ import time
 import allabolag
 import company_intel
 import db
+import person_intel
 
 log = logging.getLogger("worker")
 
@@ -212,6 +213,10 @@ def _enrich_person(person: dict) -> None:
             time.sleep(0.18)
         db.replace_person_companies(pid, rows)
         db.set_person_detail_status(pid, "done")
+        try:
+            db.score_person(pid, name)
+        except Exception as e:
+            log.warning("scoring failed %s: %s", pid, e)
     except Exception as e:
         log.warning("enrich failed %s: %s", pid, e)
         db.set_person_detail_status(pid, "error", str(e)[:300])
@@ -264,6 +269,25 @@ def _company_deep_person(person: dict) -> None:
             errors += 1
             log.warning("company intel failed %s: %s", orgnr, e)
         time.sleep(1.0)
+
+    # Person-level intel (LinkedIn/Instagram/...) — same favorite-only job.
+    # Runs regardless of company outcomes; uses the person's companies and
+    # home cities as disambiguators for these highly ambiguous names.
+    try:
+        cities: list[str] = []
+        for company in (full or {}).get("companies") or []:
+            for key in ("municipality", "county"):
+                value = company.get(key)
+                if value and value not in cities:
+                    cities.append(value)
+        intel = person_intel.enrich_person(
+            person.get("name") or "",
+            companies=targets,
+            cities=cities,
+        )
+        db.upsert_person_intel(pid, intel)
+    except Exception as e:
+        log.warning("person intel failed %s: %s", pid, e)
 
     if errors and errors == len(targets) and targets:
         db.set_company_deep_status(pid, "error", f"{errors} companies failed")

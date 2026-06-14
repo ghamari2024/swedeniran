@@ -123,6 +123,21 @@ def init_db() -> None:
                 search_provider TEXT,
                 enriched_at INTEGER
             );
+
+            CREATE TABLE IF NOT EXISTS person_intel (
+                person_id TEXT PRIMARY KEY,
+                name TEXT,
+                linkedin_url TEXT,
+                linkedin_confidence TEXT,
+                instagram_url TEXT,
+                instagram_confidence TEXT,
+                socials TEXT,
+                headline TEXT,
+                evidence TEXT,
+                data TEXT,
+                search_provider TEXT,
+                enriched_at INTEGER
+            );
             """
         )
         _ensure_columns(
@@ -773,6 +788,10 @@ def get_person(person_id: str) -> dict[str, Any] | None:
             for r in (c.get("roles") or [])
         )
         person["company_deep_status"] = row["company_deep_status"] if "company_deep_status" in row.keys() else None
+        intel_row = con.execute(
+            "SELECT * FROM person_intel WHERE person_id = ?", (person_id,)
+        ).fetchone()
+        person["intel"] = _decode_person_intel(dict(intel_row)) if intel_row else None
         return person
 
 
@@ -797,6 +816,44 @@ def backfill_iranian_scores(only_missing: bool = True) -> int:
             )
             updated += 1
         return updated
+
+
+AUTO_SPAM_THRESHOLD = int(os.environ.get("SWEDENIRAN_AUTOSPAM_THRESHOLD", "40"))
+
+
+def score_person(
+    person_id: str,
+    name: str,
+    *,
+    auto_spam_threshold: int | None = AUTO_SPAM_THRESHOLD,
+) -> int:
+    """Compute and store iranian_score for one person and auto-spam if low.
+
+    When the score is below `auto_spam_threshold`, the person is flagged as
+    spam (unless they are a favorite, which are never auto-spammed). Returns
+    the computed score.
+    """
+    from iranian_score import iranian_score
+
+    score = iranian_score(name)
+    with connect() as con:
+        if auto_spam_threshold is not None and score < auto_spam_threshold:
+            con.execute(
+                """
+                UPDATE persons
+                SET iranian_score = ?,
+                    is_spam = CASE WHEN COALESCE(is_favorite, 0) = 1 THEN COALESCE(is_spam, 0) ELSE 1 END,
+                    review_updated_at = ?
+                WHERE person_id = ?
+                """,
+                (score, now(), person_id),
+            )
+        else:
+            con.execute(
+                "UPDATE persons SET iranian_score = ? WHERE person_id = ?",
+                (score, person_id),
+            )
+    return score
 
 
 def auto_spam_below(threshold: int) -> int:
@@ -1069,6 +1126,71 @@ def get_company_intel(orgnr: str) -> dict[str, Any] | None:
 def _decode_company_intel(row: dict[str, Any]) -> dict[str, Any]:
     for key in ("keywords", "news", "certifications", "website_emails", "website_phones", "evidence"):
         row[key] = _json_list(row.get(key))
+    try:
+        row["socials"] = json.loads(row.get("socials") or "{}")
+    except (TypeError, ValueError):
+        row["socials"] = {}
+    return row
+
+
+def upsert_person_intel(person_id: str, intel: dict[str, Any]) -> None:
+    """Store verified personal profiles for a favorite (additive / non-wiping).
+
+    Discoverable fields are flaky (search throttling), so a fresh NULL/empty
+    result never overwrites a previously verified value.
+    """
+    if not person_id:
+        return
+    with connect() as con:
+        con.execute(
+            """
+            INSERT INTO person_intel
+                (person_id, name, linkedin_url, linkedin_confidence, instagram_url,
+                 instagram_confidence, socials, headline, evidence, data,
+                 search_provider, enriched_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(person_id) DO UPDATE SET
+                name=excluded.name,
+                linkedin_url=COALESCE(excluded.linkedin_url, person_intel.linkedin_url),
+                linkedin_confidence=COALESCE(excluded.linkedin_confidence, person_intel.linkedin_confidence),
+                instagram_url=COALESCE(excluded.instagram_url, person_intel.instagram_url),
+                instagram_confidence=COALESCE(excluded.instagram_confidence, person_intel.instagram_confidence),
+                socials=CASE WHEN excluded.socials IN ('{}', '', NULL) THEN person_intel.socials ELSE excluded.socials END,
+                headline=COALESCE(excluded.headline, person_intel.headline),
+                evidence=excluded.evidence,
+                data=excluded.data,
+                search_provider=excluded.search_provider,
+                enriched_at=excluded.enriched_at
+            """,
+            (
+                person_id,
+                intel.get("name"),
+                intel.get("linkedin_url"),
+                intel.get("linkedin_confidence"),
+                intel.get("instagram_url"),
+                intel.get("instagram_confidence"),
+                json.dumps(intel.get("socials") or {}, ensure_ascii=False),
+                intel.get("headline"),
+                json.dumps(intel.get("evidence") or [], ensure_ascii=False),
+                json.dumps(intel, ensure_ascii=False),
+                intel.get("search_provider"),
+                now(),
+            ),
+        )
+
+
+def get_person_intel(person_id: str) -> dict[str, Any] | None:
+    if not person_id:
+        return None
+    with connect() as con:
+        row = con.execute(
+            "SELECT * FROM person_intel WHERE person_id = ?", (person_id,)
+        ).fetchone()
+        return _decode_person_intel(dict(row)) if row else None
+
+
+def _decode_person_intel(row: dict[str, Any]) -> dict[str, Any]:
+    row["evidence"] = _json_list(row.get("evidence"))
     try:
         row["socials"] = json.loads(row.get("socials") or "{}")
     except (TypeError, ValueError):
