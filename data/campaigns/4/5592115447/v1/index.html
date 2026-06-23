@@ -1,0 +1,1553 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="GladDental Clinic – modern tandvård på Södermalm i Stockholm. Boka tid online.">
+  <title>GladDental Clinic | Tandvård Stockholm Södermalm</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --teal: #0d9488;
+      --teal-dark: #0f766e;
+      --teal-light: #5eead4;
+      --mint: #f0fdfa;
+      --cream: #fafaf9;
+      --ink: #0c1222;
+      --ink-soft: #475569;
+      --white: #ffffff;
+      --glass: rgba(255, 255, 255, 0.72);
+      --glass-border: rgba(255, 255, 255, 0.55);
+      --glass-shadow: 0 8px 32px rgba(13, 148, 136, 0.12);
+      --radius: 20px;
+      --radius-sm: 14px;
+      --nav-h: 72px;
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    html {
+      scroll-behavior: smooth;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body {
+      font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+      background: var(--cream);
+      color: var(--ink);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    img { max-width: 100%; display: block; }
+    a { color: inherit; text-decoration: none; }
+    button, input, select, textarea { font: inherit; }
+
+    .container {
+      width: min(1120px, calc(100% - 2rem));
+      margin-inline: auto;
+    }
+
+    /* ── Glass button ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.55rem;
+      padding: 1rem 1.75rem;
+      min-height: 56px;
+      border-radius: 999px;
+      border: 1px solid var(--glass-border);
+      background: var(--glass);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      box-shadow: var(--glass-shadow), inset 0 1px 0 rgba(255,255,255,0.85);
+      color: var(--ink);
+      font-weight: 600;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: transform 0.25s var(--ease), box-shadow 0.25s var(--ease), background 0.25s var(--ease);
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 40px rgba(13, 148, 136, 0.2), inset 0 1px 0 rgba(255,255,255,0.9);
+    }
+
+    .btn:active { transform: translateY(0); }
+
+    .btn-primary {
+      background: linear-gradient(135deg, rgba(13,148,136,0.92), rgba(15,118,110,0.95));
+      border-color: rgba(255,255,255,0.25);
+      color: var(--white);
+      box-shadow: 0 10px 36px rgba(13, 148, 136, 0.35), inset 0 1px 0 rgba(255,255,255,0.2);
+    }
+
+    .btn-primary:hover {
+      box-shadow: 0 16px 48px rgba(13, 148, 136, 0.45), inset 0 1px 0 rgba(255,255,255,0.25);
+    }
+
+    .btn-lg {
+      padding: 1.15rem 2rem;
+      min-height: 60px;
+      font-size: 1.05rem;
+    }
+
+    .btn-block { width: 100%; }
+
+    /* ── Nav ── */
+    .nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      height: var(--nav-h);
+      display: flex;
+      align-items: center;
+      transition: background 0.3s var(--ease), box-shadow 0.3s var(--ease);
+    }
+
+    .nav.scrolled {
+      background: rgba(250, 250, 249, 0.82);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      box-shadow: 0 1px 0 rgba(0,0,0,0.06);
+    }
+
+    .nav-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      width: min(1120px, calc(100% - 2rem));
+      margin-inline: auto;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      font-weight: 700;
+      font-size: 1.15rem;
+      letter-spacing: -0.02em;
+    }
+
+    .logo-mark {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      background: linear-gradient(145deg, var(--teal), var(--teal-dark));
+      display: grid;
+      place-items: center;
+      color: white;
+      font-size: 1.1rem;
+      box-shadow: 0 4px 16px rgba(13,148,136,0.35);
+    }
+
+    .nav-links {
+      display: none;
+      align-items: center;
+      gap: 2rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      font-size: 0.95rem;
+      font-weight: 500;
+      color: var(--ink-soft);
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover { color: var(--teal); }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .lang-toggle {
+      display: flex;
+      padding: 4px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.6);
+      border: 1px solid rgba(255,255,255,0.7);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    .lang-btn {
+      padding: 0.45rem 0.85rem;
+      border: none;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--ink-soft);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s var(--ease);
+    }
+
+    .lang-btn.active {
+      background: var(--white);
+      color: var(--teal-dark);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .menu-btn {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 5px;
+      width: 44px;
+      height: 44px;
+      padding: 10px;
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      background: var(--glass);
+      backdrop-filter: blur(12px);
+      cursor: pointer;
+    }
+
+    .menu-btn span {
+      display: block;
+      height: 2px;
+      background: var(--ink);
+      border-radius: 2px;
+      transition: transform 0.3s var(--ease), opacity 0.3s;
+    }
+
+    .menu-btn.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+    .menu-btn.open span:nth-child(2) { opacity: 0; }
+    .menu-btn.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+    .mobile-menu {
+      position: fixed;
+      inset: var(--nav-h) 0 0 0;
+      background: rgba(250,250,249,0.96);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      padding: 2rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      transform: translateX(100%);
+      transition: transform 0.35s var(--ease);
+      z-index: 99;
+    }
+
+    .mobile-menu.open { transform: translateX(0); }
+
+    .mobile-menu a {
+      padding: 1rem 1.25rem;
+      border-radius: var(--radius-sm);
+      font-weight: 500;
+      font-size: 1.1rem;
+      background: var(--white);
+      border: 1px solid rgba(0,0,0,0.05);
+    }
+
+    .nav-book { display: none; }
+
+    @media (min-width: 768px) {
+      .nav-links { display: flex; }
+      .menu-btn { display: none; }
+      .nav-book { display: inline-flex; }
+    }
+
+    /* ── Hero ── */
+    .hero {
+      position: relative;
+      min-height: 100svh;
+      display: flex;
+      align-items: center;
+      padding: calc(var(--nav-h) + 2rem) 0 4rem;
+      overflow: hidden;
+    }
+
+    .hero-bg {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      background:
+        radial-gradient(ellipse 80% 60% at 10% 20%, rgba(94, 234, 212, 0.35), transparent),
+        radial-gradient(ellipse 70% 50% at 90% 10%, rgba(13, 148, 136, 0.18), transparent),
+        radial-gradient(ellipse 60% 40% at 50% 100%, rgba(240, 253, 250, 0.9), transparent),
+        linear-gradient(180deg, #ecfdf5 0%, var(--cream) 55%, var(--cream) 100%);
+    }
+
+    .hero-grid {
+      display: grid;
+      gap: 2.5rem;
+      align-items: center;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      border-radius: 999px;
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      backdrop-filter: blur(12px);
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--teal-dark);
+      margin-bottom: 1.25rem;
+    }
+
+    .hero-badge-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--teal);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(0.85); }
+    }
+
+    .hero h1 {
+      font-size: clamp(2.2rem, 7vw, 3.6rem);
+      font-weight: 700;
+      line-height: 1.08;
+      letter-spacing: -0.03em;
+      margin-bottom: 1.25rem;
+    }
+
+    .hero h1 em {
+      font-style: normal;
+      background: linear-gradient(135deg, var(--teal), var(--teal-dark));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-lead {
+      font-size: clamp(1.05rem, 2.5vw, 1.2rem);
+      color: var(--ink-soft);
+      max-width: 34ch;
+      margin-bottom: 2rem;
+    }
+
+    .hero-cta {
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+
+    .hero-card {
+      position: relative;
+      padding: 1.75rem;
+      border-radius: var(--radius);
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      box-shadow: var(--glass-shadow);
+    }
+
+    .hero-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--teal);
+      margin-bottom: 0.5rem;
+    }
+
+    .hero-card-price {
+      font-size: 2.5rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1;
+      margin-bottom: 0.35rem;
+    }
+
+    .hero-card-desc {
+      font-size: 0.92rem;
+      color: var(--ink-soft);
+      margin-bottom: 1.25rem;
+    }
+
+    .hero-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-top: 1.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid rgba(0,0,0,0.06);
+    }
+
+    .hero-stat strong {
+      display: block;
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--teal-dark);
+    }
+
+    .hero-stat span {
+      font-size: 0.82rem;
+      color: var(--ink-soft);
+    }
+
+    @media (min-width: 768px) {
+      .hero-grid { grid-template-columns: 1.1fr 0.9fr; }
+      .hero-cta { flex-direction: row; flex-wrap: wrap; }
+    }
+
+    /* ── Sections ── */
+    section { padding: 5rem 0; }
+
+    .section-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--teal);
+      margin-bottom: 0.75rem;
+    }
+
+    .section-title {
+      font-size: clamp(1.75rem, 4vw, 2.5rem);
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      line-height: 1.15;
+      margin-bottom: 1rem;
+    }
+
+    .section-desc {
+      color: var(--ink-soft);
+      max-width: 52ch;
+      margin-bottom: 2.5rem;
+    }
+
+    /* ── Services ── */
+    .services { background: var(--white); }
+
+    .services-grid {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: 1fr;
+    }
+
+    @media (min-width: 540px) {
+      .services-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (min-width: 900px) {
+      .services-grid { grid-template-columns: repeat(4, 1fr); }
+    }
+
+    .service-card {
+      padding: 1.5rem;
+      border-radius: var(--radius);
+      background: var(--cream);
+      border: 1px solid rgba(0,0,0,0.04);
+      transition: transform 0.3s var(--ease), box-shadow 0.3s var(--ease);
+    }
+
+    .service-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 40px rgba(13,148,136,0.1);
+    }
+
+    .service-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, rgba(13,148,136,0.12), rgba(94,234,212,0.2));
+      display: grid;
+      place-items: center;
+      font-size: 1.4rem;
+      margin-bottom: 1rem;
+    }
+
+    .service-card h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 0.4rem;
+    }
+
+    .service-card p {
+      font-size: 0.88rem;
+      color: var(--ink-soft);
+      line-height: 1.5;
+    }
+
+    /* ── About ── */
+    .about-grid {
+      display: grid;
+      gap: 2rem;
+      align-items: center;
+    }
+
+    .about-visual {
+      aspect-ratio: 4/3;
+      border-radius: var(--radius);
+      background:
+        linear-gradient(145deg, rgba(13,148,136,0.08), rgba(94,234,212,0.15)),
+        radial-gradient(circle at 30% 70%, rgba(13,148,136,0.2), transparent 60%);
+      border: 1px solid var(--glass-border);
+      display: grid;
+      place-items: center;
+      padding: 2rem;
+    }
+
+    .about-visual-inner {
+      text-align: center;
+    }
+
+    .about-visual-inner .big {
+      font-size: clamp(3rem, 10vw, 4.5rem);
+      font-weight: 700;
+      color: var(--teal-dark);
+      line-height: 1;
+    }
+
+    .about-visual-inner .sub {
+      font-size: 1rem;
+      color: var(--ink-soft);
+      margin-top: 0.5rem;
+    }
+
+    .pillars {
+      display: grid;
+      gap: 1rem;
+      margin-top: 1.5rem;
+    }
+
+    .pillar {
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
+      padding: 1.15rem;
+      border-radius: var(--radius-sm);
+      background: var(--white);
+      border: 1px solid rgba(0,0,0,0.04);
+    }
+
+    .pillar-num {
+      flex-shrink: 0;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: var(--mint);
+      color: var(--teal-dark);
+      font-weight: 700;
+      font-size: 0.9rem;
+      display: grid;
+      place-items: center;
+    }
+
+    .pillar h4 { font-size: 0.95rem; font-weight: 600; margin-bottom: 0.2rem; }
+    .pillar p { font-size: 0.85rem; color: var(--ink-soft); }
+
+    @media (min-width: 768px) {
+      .about-grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    /* ── Booking ── */
+    .booking {
+      background: linear-gradient(180deg, var(--mint) 0%, var(--cream) 100%);
+    }
+
+    .booking-wrap {
+      display: grid;
+      gap: 2rem;
+    }
+
+    @media (min-width: 900px) {
+      .booking-wrap { grid-template-columns: 1fr 1.2fr; align-items: start; }
+    }
+
+    .booking-info {
+      padding: 1.75rem;
+      border-radius: var(--radius);
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      backdrop-filter: blur(16px);
+      box-shadow: var(--glass-shadow);
+    }
+
+    .booking-info ul {
+      list-style: none;
+      margin-top: 1.25rem;
+    }
+
+    .booking-info li {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
+      padding: 0.65rem 0;
+      font-size: 0.92rem;
+      color: var(--ink-soft);
+      border-bottom: 1px solid rgba(0,0,0,0.05);
+    }
+
+    .booking-info li:last-child { border-bottom: none; }
+    .booking-info li::before { content: '✓'; color: var(--teal); font-weight: 700; flex-shrink: 0; }
+
+    .booking-form {
+      padding: 1.75rem;
+      border-radius: var(--radius);
+      background: var(--white);
+      border: 1px solid rgba(0,0,0,0.06);
+      box-shadow: 0 20px 60px rgba(13,148,136,0.08);
+    }
+
+    .form-step-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--teal);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 1rem;
+    }
+
+    .form-group { margin-bottom: 1.15rem; }
+
+    .form-group label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 500;
+      margin-bottom: 0.45rem;
+      color: var(--ink);
+    }
+
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      width: 100%;
+      padding: 0.9rem 1rem;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(0,0,0,0.1);
+      background: var(--cream);
+      color: var(--ink);
+      transition: border-color 0.2s, box-shadow 0.2s;
+      -webkit-appearance: none;
+    }
+
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: var(--teal);
+      box-shadow: 0 0 0 3px rgba(13,148,136,0.12);
+    }
+
+    .form-group textarea { min-height: 90px; resize: vertical; }
+
+    .form-row {
+      display: grid;
+      gap: 1rem;
+    }
+
+    @media (min-width: 540px) {
+      .form-row { grid-template-columns: 1fr 1fr; }
+    }
+
+    .time-slots {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.5rem;
+    }
+
+    @media (min-width: 540px) {
+      .time-slots { grid-template-columns: repeat(4, 1fr); }
+    }
+
+    .time-slot {
+      padding: 0.7rem 0.5rem;
+      border-radius: 10px;
+      border: 1px solid rgba(0,0,0,0.08);
+      background: var(--cream);
+      font-size: 0.85rem;
+      font-weight: 500;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s var(--ease);
+    }
+
+    .time-slot:hover { border-color: var(--teal-light); }
+    .time-slot.selected {
+      background: var(--teal);
+      border-color: var(--teal);
+      color: white;
+    }
+
+    .time-slot.disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .when-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .when-chip {
+      padding: 0.65rem 1.1rem;
+      border-radius: 999px;
+      border: 1px solid rgba(0,0,0,0.08);
+      background: var(--cream);
+      font-size: 0.88rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s var(--ease);
+    }
+
+    .when-chip.selected {
+      background: rgba(13,148,136,0.12);
+      border-color: var(--teal);
+      color: var(--teal-dark);
+    }
+
+    .checkbox-row {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
+      font-size: 0.82rem;
+      color: var(--ink-soft);
+    }
+
+    .checkbox-row input {
+      width: 18px;
+      height: 18px;
+      margin-top: 2px;
+      accent-color: var(--teal);
+      flex-shrink: 0;
+    }
+
+    .form-error {
+      color: #dc2626;
+      font-size: 0.82rem;
+      margin-top: 0.35rem;
+      display: none;
+    }
+
+    .form-error.show { display: block; }
+
+    /* Success overlay */
+    .success-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      background: rgba(12, 18, 34, 0.5);
+      backdrop-filter: blur(8px);
+      place-items: center;
+      padding: 1.5rem;
+    }
+
+    .success-overlay.show { display: grid; }
+
+    .success-card {
+      width: min(420px, 100%);
+      padding: 2.5rem 2rem;
+      border-radius: var(--radius);
+      background: var(--white);
+      text-align: center;
+      animation: popIn 0.4s var(--ease);
+    }
+
+    @keyframes popIn {
+      from { opacity: 0; transform: scale(0.92) translateY(10px); }
+      to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    .success-icon {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--teal), var(--teal-dark));
+      color: white;
+      font-size: 1.75rem;
+      display: grid;
+      place-items: center;
+      margin: 0 auto 1.25rem;
+    }
+
+    .success-card h3 {
+      font-size: 1.4rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .success-card p {
+      color: var(--ink-soft);
+      font-size: 0.95rem;
+      margin-bottom: 1.5rem;
+    }
+
+    /* ── Contact ── */
+    .contact-grid {
+      display: grid;
+      gap: 1rem;
+    }
+
+    @media (min-width: 540px) {
+      .contact-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (min-width: 900px) {
+      .contact-grid { grid-template-columns: repeat(4, 1fr); }
+    }
+
+    .contact-card {
+      padding: 1.5rem;
+      border-radius: var(--radius);
+      background: var(--white);
+      border: 1px solid rgba(0,0,0,0.05);
+      transition: transform 0.3s var(--ease);
+    }
+
+    .contact-card:hover { transform: translateY(-3px); }
+
+    .contact-card-icon {
+      font-size: 1.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .contact-card h3 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--teal);
+      margin-bottom: 0.35rem;
+    }
+
+    .contact-card p, .contact-card a {
+      font-size: 0.95rem;
+      color: var(--ink);
+      font-weight: 500;
+    }
+
+    .contact-card a:hover { color: var(--teal); }
+
+    .map-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 2rem;
+      font-weight: 600;
+      color: var(--teal-dark);
+    }
+
+    .map-link:hover { text-decoration: underline; }
+
+    .languages-banner {
+      margin-top: 2.5rem;
+      padding: 1.25rem 1.5rem;
+      border-radius: var(--radius);
+      background: linear-gradient(135deg, rgba(13,148,136,0.08), rgba(94,234,212,0.12));
+      border: 1px solid rgba(13,148,136,0.15);
+      text-align: center;
+    }
+
+    .languages-banner p {
+      font-size: 0.92rem;
+      color: var(--ink-soft);
+    }
+
+    .languages-banner strong { color: var(--teal-dark); }
+
+    /* ── Footer ── */
+    footer {
+      padding: 2.5rem 0;
+      background: var(--ink);
+      color: rgba(255,255,255,0.7);
+      font-size: 0.85rem;
+    }
+
+    .footer-inner {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      align-items: center;
+      text-align: center;
+    }
+
+    @media (min-width: 768px) {
+      .footer-inner {
+        flex-direction: row;
+        justify-content: space-between;
+        text-align: left;
+      }
+    }
+
+    .footer-logo {
+      color: white;
+      font-weight: 700;
+      font-size: 1.1rem;
+    }
+
+    .footer-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.25rem;
+      justify-content: center;
+    }
+
+    .footer-links a:hover { color: white; }
+
+    /* Reveal animation */
+    .reveal {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity 0.6s var(--ease), transform 0.6s var(--ease);
+    }
+
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav" id="nav">
+    <div class="nav-inner">
+      <a href="#" class="logo">
+        <span class="logo-mark">G</span>
+        <span>GladDental</span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="#tjanster" data-i18n="nav.services">Tjänster</a></li>
+        <li><a href="#om-oss" data-i18n="nav.about">Om oss</a></li>
+        <li><a href="#boka" data-i18n="nav.book">Boka tid</a></li>
+        <li><a href="#kontakt" data-i18n="nav.contact">Kontakt</a></li>
+      </ul>
+      <div class="nav-actions">
+        <div class="lang-toggle" role="group" aria-label="Language">
+          <button class="lang-btn active" data-lang="sv" type="button">SV</button>
+          <button class="lang-btn" data-lang="en" type="button">EN</button>
+        </div>
+        <a href="#boka" class="btn btn-primary nav-book" data-i18n="nav.bookBtn">Boka tid</a>
+        <button class="menu-btn" id="menuBtn" aria-label="Menu" type="button">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <div class="mobile-menu" id="mobileMenu">
+    <a href="#tjanster" data-i18n="nav.services">Tjänster</a>
+    <a href="#om-oss" data-i18n="nav.about">Om oss</a>
+    <a href="#boka" data-i18n="nav.book">Boka tid</a>
+    <a href="#kontakt" data-i18n="nav.contact">Kontakt</a>
+    <a href="#boka" class="btn btn-primary btn-lg btn-block" data-i18n="nav.bookBtn">Boka tid</a>
+  </div>
+
+  <!-- Hero -->
+  <header class="hero">
+    <div class="hero-bg"></div>
+    <div class="container hero-grid">
+      <div class="reveal">
+        <div class="hero-badge">
+          <span class="hero-badge-dot"></span>
+          <span data-i18n="hero.badge">Södermalm · Stockholm</span>
+        </div>
+        <h1><span data-i18n="hero.title1">Din moderna</span> <em data-i18n="hero.title2">tandvård</em></h1>
+        <p class="hero-lead" data-i18n="hero.lead">Trygg och modern tandvård i hjärtat av Södermalm. Från undersökningar till akuttider – vi finns här för hela familjen.</p>
+        <div class="hero-cta">
+          <a href="#boka" class="btn btn-primary btn-lg" data-i18n="hero.ctaBook">Boka tid online</a>
+          <a href="tel:086408283" class="btn btn-lg" data-i18n="hero.ctaCall">Ring 08 640 82 83</a>
+        </div>
+      </div>
+      <div class="hero-card reveal">
+        <div class="hero-card-label" data-i18n="hero.offerLabel">Ny patient-erbjudande</div>
+        <div class="hero-card-price">490 kr</div>
+        <p class="hero-card-desc" data-i18n="hero.offerDesc">Komplett tandundersökning med AirFlow-rengöring. Ord. pris 1 500 kr. 500 kr rabatt på nästa behandling.</p>
+        <a href="#boka" class="btn btn-primary btn-block" data-i18n="hero.offerBtn">Boka välkomstbesök</a>
+        <div class="hero-stats">
+          <div class="hero-stat">
+            <strong>3 000+</strong>
+            <span data-i18n="hero.stat1">Nöjda patienter</span>
+          </div>
+          <div class="hero-stat">
+            <strong>24h</strong>
+            <span data-i18n="hero.stat2">Akuttider</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Services -->
+  <section class="services" id="tjanster">
+    <div class="container">
+      <p class="section-label reveal" data-i18n="services.label">Våra behandlingar</p>
+      <h2 class="section-title reveal" data-i18n="services.title">Tandvård för hela familjen</h2>
+      <p class="section-desc reveal" data-i18n="services.desc">Vi erbjuder ett komplett utbud av tandvårdstjänster under ett och samma tak – med erfarna tandläkare och tandhygienister.</p>
+      <div class="services-grid">
+        <article class="service-card reveal">
+          <div class="service-icon">🦷</div>
+          <h3 data-i18n="services.s1.title">Undersökning</h3>
+          <p data-i18n="services.s1.desc">Upptäck problem i tid och förebygg framtida besvär med regelbundna kontroller.</p>
+        </article>
+        <article class="service-card reveal">
+          <div class="service-icon">✨</div>
+          <h3 data-i18n="services.s2.title">Estetisk tandvård</h3>
+          <p data-i18n="services.s2.desc">Tandblekning och skalfasader för ett vackrare, naturligt leende.</p>
+        </article>
+        <article class="service-card reveal">
+          <div class="service-icon">🔩</div>
+          <h3 data-i18n="services.s3.title">Tandimplantat</h3>
+          <p data-i18n="services.s3.desc">Trygg implantatbehandling med modern teknik och erfarna tandläkare.</p>
+        </article>
+        <article class="service-card reveal">
+          <div class="service-icon">🚨</div>
+          <h3 data-i18n="services.s4.title">Akut tandvård</h3>
+          <p data-i18n="services.s4.desc">Snabb hjälp vid tandvärk, skador eller plötsliga problem – akuttider inom 24 timmar.</p>
+        </article>
+        <article class="service-card reveal">
+          <div class="service-icon">👶</div>
+          <h3 data-i18n="services.s5.title">Barn tandvård</h3>
+          <p data-i18n="services.s5.desc">Trygg och skonsam tandvård anpassad för de yngsta patienterna.</p>
+        </article>
+        <article class="service-card reveal">
+          <div class="service-icon">🦴</div>
+          <h3 data-i18n="services.s6.title">Tandkirurgi</h3>
+          <p data-i18n="services.s6.desc">Skonsamma ingrepp som tandutdragning och borttagning av visdomständer.</p>
+        </article>
+        <article class="service-card reveal">
+          <div class="service-icon">👑</div>
+          <h3 data-i18n="services.s7.title">Kronor & broar</h3>
+          <p data-i18n="services.s7.desc">Hållbara lösningar som återställer funktion och estetik.</p>
+        </article>
+        <article class="service-card reveal">
+          <div class="service-icon">😁</div>
+          <h3 data-i18n="services.s8.title">Osynlig tandreglering</h3>
+          <p data-i18n="services.s8.desc">CleanCorrect – genomskinliga, avtagbara skenor för rakare tänder.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- About -->
+  <section id="om-oss">
+    <div class="container about-grid">
+      <div class="about-visual reveal">
+        <div class="about-visual-inner">
+          <div class="big">2021</div>
+          <div class="sub" data-i18n="about.since">Sedan april 2021 i samma anda</div>
+        </div>
+      </div>
+      <div class="reveal">
+        <p class="section-label" data-i18n="about.label">Om GladDental</p>
+        <h2 class="section-title" data-i18n="about.title">Patienten i centrum</h2>
+        <p class="section-desc" style="margin-bottom:0" data-i18n="about.desc">Vi kombinerar lång erfarenhet med modern tandvård och den senaste tekniken. Vårt mål är att hjälpa dig förebygga problem – så att du kan njuta av en frisk mun och ett vackert leende hela livet.</p>
+        <div class="pillars">
+          <div class="pillar">
+            <span class="pillar-num">1</span>
+            <div>
+              <h4 data-i18n="about.p1.title">Förebyggande vård</h4>
+              <p data-i18n="about.p1.desc">Regelbundna kontroller och personliga råd för långsiktig munhälsa.</p>
+            </div>
+          </div>
+          <div class="pillar">
+            <span class="pillar-num">2</span>
+            <div>
+              <h4 data-i18n="about.p2.title">Hög kvalitet</h4>
+              <p data-i18n="about.p2.desc">Evidensbaserade metoder och modern teknik i varje behandling.</p>
+            </div>
+          </div>
+          <div class="pillar">
+            <span class="pillar-num">3</span>
+            <div>
+              <h4 data-i18n="about.p3.title">Personligt bemötande</h4>
+              <p data-i18n="about.p3.desc">Empati, tålamod och tydlig kommunikation – du är en del av GladDental-familjen.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Booking -->
+  <section class="booking" id="boka">
+    <div class="container">
+      <p class="section-label reveal" data-i18n="book.label">Onlinebokning</p>
+      <h2 class="section-title reveal" data-i18n="book.title">Boka din tid</h2>
+      <p class="section-desc reveal" data-i18n="book.desc">Välj behandling, datum och tid – vi bekräftar din bokning så snart som möjligt.</p>
+
+      <div class="booking-wrap">
+        <aside class="booking-info reveal">
+          <h3 style="font-size:1.15rem;font-weight:600;margin-bottom:0.5rem" data-i18n="book.infoTitle">Välkomstbesök – 490 kr</h3>
+          <p style="font-size:0.9rem;color:var(--ink-soft)" data-i18n="book.infoDesc">Som ny patient får du en fullständig undersökning inklusive AirFlow-rengöring.</p>
+          <ul>
+            <li data-i18n="book.li1">Fullständig tandundersökning</li>
+            <li data-i18n="book.li2">Bitewingbilder & diagnos</li>
+            <li data-i18n="book.li3">Professionell AirFlow-rengöring</li>
+            <li data-i18n="book.li4">Personlig behandlingsplan</li>
+            <li data-i18n="book.li5">500 kr rabatt på nästa behandling</li>
+          </ul>
+        </aside>
+
+        <form class="booking-form reveal" id="bookingForm" novalidate>
+          <p class="form-step-label" data-i18n="book.step1">Steg 1 – Välj behandling</p>
+          <div class="form-group">
+            <label for="service" data-i18n="book.service">Behandling</label>
+            <select id="service" name="service" required>
+              <option value="" data-i18n="book.servicePlaceholder">Välj behandling...</option>
+              <option value="welcome" data-i18n="book.optWelcome">Välkomstbesök (490 kr)</option>
+              <option value="checkup" data-i18n="book.optCheckup">Undersökning & rengöring</option>
+              <option value="emergency" data-i18n="book.optEmergency">Akut tandvård</option>
+              <option value="implant" data-i18n="book.optImplant">Tandimplantat – konsultation</option>
+              <option value="cosmetic" data-i18n="book.optCosmetic">Estetisk tandvård</option>
+              <option value="ortho" data-i18n="book.optOrtho">Osynlig tandreglering</option>
+              <option value="other" data-i18n="book.optOther">Annat</option>
+            </select>
+          </div>
+
+          <p class="form-step-label" style="margin-top:1.5rem" data-i18n="book.step2">Steg 2 – När passar det?</p>
+          <div class="form-group">
+            <label data-i18n="book.when">Tidsram</label>
+            <div class="when-chips" id="whenChips">
+              <button type="button" class="when-chip" data-when="week" data-i18n="book.whenWeek">Den här veckan</button>
+              <button type="button" class="when-chip" data-when="next" data-i18n="book.whenNext">Nästa vecka</button>
+              <button type="button" class="when-chip" data-when="later" data-i18n="book.whenLater">Längre fram</button>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="date" data-i18n="book.date">Önskat datum</label>
+              <input type="date" id="date" name="date" required>
+            </div>
+            <div class="form-group">
+              <label data-i18n="book.time">Önskad tid</label>
+              <div class="time-slots" id="timeSlots"></div>
+              <input type="hidden" id="time" name="time" required>
+              <p class="form-error" id="timeError" data-i18n="book.timeError">Välj en tid</p>
+            </div>
+          </div>
+
+          <p class="form-step-label" style="margin-top:1.5rem" data-i18n="book.step3">Steg 3 – Dina uppgifter</p>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="name" data-i18n="book.name">För- och efternamn</label>
+              <input type="text" id="name" name="name" required autocomplete="name">
+            </div>
+            <div class="form-group">
+              <label for="phone" data-i18n="book.phone">Telefonnummer</label>
+              <input type="tel" id="phone" name="phone" required autocomplete="tel" placeholder="07X XXX XX XX">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="email" data-i18n="book.email">E-post</label>
+            <input type="email" id="email" name="email" required autocomplete="email">
+          </div>
+          <div class="form-group">
+            <label for="message" data-i18n="book.message">Meddelande (valfritt)</label>
+            <textarea id="message" name="message"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="checkbox-row">
+              <input type="checkbox" id="gdpr" name="gdpr" required>
+              <span data-i18n="book.gdpr">Jag godkänner att mina uppgifter används för att boka min tid i enlighet med integritetspolicyn.</span>
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary btn-lg btn-block" data-i18n="book.submit">Boka min tid</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- Contact -->
+  <section id="kontakt">
+    <div class="container">
+      <p class="section-label reveal" data-i18n="contact.label">Kontakt</p>
+      <h2 class="section-title reveal" data-i18n="contact.title">Vi finns här för dig</h2>
+      <p class="section-desc reveal" data-i18n="contact.desc">Vill du boka, ändra en tid eller har frågor? Ring oss direkt eller besök oss nära tunnelbanan vid Skanstull.</p>
+
+      <div class="contact-grid">
+        <div class="contact-card reveal">
+          <div class="contact-card-icon">📞</div>
+          <h3 data-i18n="contact.phoneLabel">Telefon</h3>
+          <p><a href="tel:086408283">08 640 82 83</a></p>
+        </div>
+        <div class="contact-card reveal">
+          <div class="contact-card-icon">✉️</div>
+          <h3 data-i18n="contact.emailLabel">E-post</h3>
+          <p><a href="mailto:info@gladdental.se">info@gladdental.se</a></p>
+        </div>
+        <div class="contact-card reveal">
+          <div class="contact-card-icon">📍</div>
+          <h3 data-i18n="contact.addressLabel">Adress</h3>
+          <p>Ringvägen 125<br>116 61 Stockholm</p>
+        </div>
+        <div class="contact-card reveal">
+          <div class="contact-card-icon">🕐</div>
+          <h3 data-i18n="contact.hoursLabel">Öppettider</h3>
+          <p data-i18n="contact.hours">Mån – Tor: 08:00 – 17:00<br>Fredagar: 08:00 – 13:00</p>
+        </div>
+      </div>
+
+      <a href="https://maps.google.com/?q=Ringvägen+125,+116+61+Stockholm" target="_blank" rel="noopener" class="map-link reveal">
+        <span>→</span>
+        <span data-i18n="contact.map">Visa på karta – nära Skanstull</span>
+      </a>
+
+      <div class="languages-banner reveal">
+        <p data-i18n="contact.languages">Vi talar <strong>Svenska, Engelska, Persiska och Ryska</strong> på kliniken.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container footer-inner">
+      <div>
+        <div class="footer-logo">GladDental Clinic AB</div>
+        <p style="margin-top:0.35rem">Org.nr 559211-5447 · Ringvägen 125, 116 61 Stockholm</p>
+      </div>
+      <div class="footer-links">
+        <a href="tel:086408283">08 640 82 83</a>
+        <a href="mailto:info@gladdental.se">info@gladdental.se</a>
+        <a href="https://gladdental.se" target="_blank" rel="noopener">gladdental.se</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Success Modal -->
+  <div class="success-overlay" id="successOverlay">
+    <div class="success-card">
+      <div class="success-icon">✓</div>
+      <h3 data-i18n="success.title">Tack för din bokning!</h3>
+      <p id="successMsg" data-i18n="success.desc">Vi har tagit emot din förfrågan och återkommer inom kort för att bekräfta din tid.</p>
+      <button class="btn btn-primary btn-lg" id="successClose" type="button" data-i18n="success.close">Stäng</button>
+    </div>
+  </div>
+
+  <script>
+    const i18n = {
+      sv: {
+        'nav.services': 'Tjänster',
+        'nav.about': 'Om oss',
+        'nav.book': 'Boka tid',
+        'nav.contact': 'Kontakt',
+        'nav.bookBtn': 'Boka tid',
+        'hero.badge': 'Södermalm · Stockholm',
+        'hero.title1': 'Din moderna',
+        'hero.title2': 'tandvård',
+        'hero.lead': 'Trygg och modern tandvård i hjärtat av Södermalm. Från undersökningar till akuttider – vi finns här för hela familjen.',
+        'hero.ctaBook': 'Boka tid online',
+        'hero.ctaCall': 'Ring 08 640 82 83',
+        'hero.offerLabel': 'Ny patient-erbjudande',
+        'hero.offerDesc': 'Komplett tandundersökning med AirFlow-rengöring. Ord. pris 1 500 kr. 500 kr rabatt på nästa behandling.',
+        'hero.offerBtn': 'Boka välkomstbesök',
+        'hero.stat1': 'Nöjda patienter',
+        'hero.stat2': 'Akuttider',
+        'services.label': 'Våra behandlingar',
+        'services.title': 'Tandvård för hela familjen',
+        'services.desc': 'Vi erbjuder ett komplett utbud av tandvårdstjänster under ett och samma tak – med erfarna tandläkare och tandhygienister.',
+        'services.s1.title': 'Undersökning', 'services.s1.desc': 'Upptäck problem i tid och förebygg framtida besvär med regelbundna kontroller.',
+        'services.s2.title': 'Estetisk tandvård', 'services.s2.desc': 'Tandblekning och skalfasader för ett vackrare, naturligt leende.',
+        'services.s3.title': 'Tandimplantat', 'services.s3.desc': 'Trygg implantatbehandling med modern teknik och erfarna tandläkare.',
+        'services.s4.title': 'Akut tandvård', 'services.s4.desc': 'Snabb hjälp vid tandvärk, skador eller plötsliga problem – akuttider inom 24 timmar.',
+        'services.s5.title': 'Barn tandvård', 'services.s5.desc': 'Trygg och skonsam tandvård anpassad för de yngsta patienterna.',
+        'services.s6.title': 'Tandkirurgi', 'services.s6.desc': 'Skonsamma ingrepp som tandutdragning och borttagning av visdomständer.',
+        'services.s7.title': 'Kronor & broar', 'services.s7.desc': 'Hållbara lösningar som återställer funktion och estetik.',
+        'services.s8.title': 'Osynlig tandreglering', 'services.s8.desc': 'CleanCorrect – genomskinliga, avtagbara skenor för rakare tänder.',
+        'about.since': 'Sedan april 2021 i samma anda',
+        'about.label': 'Om GladDental',
+        'about.title': 'Patienten i centrum',
+        'about.desc': 'Vi kombinerar lång erfarenhet med modern tandvård och den senaste tekniken. Vårt mål är att hjälpa dig förebygga problem – så att du kan njuta av en frisk mun och ett vackert leende hela livet.',
+        'about.p1.title': 'Förebyggande vård', 'about.p1.desc': 'Regelbundna kontroller och personliga råd för långsiktig munhälsa.',
+        'about.p2.title': 'Hög kvalitet', 'about.p2.desc': 'Evidensbaserade metoder och modern teknik i varje behandling.',
+        'about.p3.title': 'Personligt bemötande', 'about.p3.desc': 'Empati, tålamod och tydlig kommunikation – du är en del av GladDental-familjen.',
+        'book.label': 'Onlinebokning',
+        'book.title': 'Boka din tid',
+        'book.desc': 'Välj behandling, datum och tid – vi bekräftar din bokning så snart som möjligt.',
+        'book.infoTitle': 'Välkomstbesök – 490 kr',
+        'book.infoDesc': 'Som ny patient får du en fullständig undersökning inklusive AirFlow-rengöring.',
+        'book.li1': 'Fullständig tandundersökning', 'book.li2': 'Bitewingbilder & diagnos',
+        'book.li3': 'Professionell AirFlow-rengöring', 'book.li4': 'Personlig behandlingsplan',
+        'book.li5': '500 kr rabatt på nästa behandling',
+        'book.step1': 'Steg 1 – Välj behandling', 'book.step2': 'Steg 2 – När passar det?', 'book.step3': 'Steg 3 – Dina uppgifter',
+        'book.service': 'Behandling', 'book.servicePlaceholder': 'Välj behandling...',
+        'book.optWelcome': 'Välkomstbesök (490 kr)', 'book.optCheckup': 'Undersökning & rengöring',
+        'book.optEmergency': 'Akut tandvård', 'book.optImplant': 'Tandimplantat – konsultation',
+        'book.optCosmetic': 'Estetisk tandvård', 'book.optOrtho': 'Osynlig tandreglering', 'book.optOther': 'Annat',
+        'book.when': 'Tidsram', 'book.whenWeek': 'Den här veckan', 'book.whenNext': 'Nästa vecka', 'book.whenLater': 'Längre fram',
+        'book.date': 'Önskat datum', 'book.time': 'Önskad tid', 'book.timeError': 'Välj en tid',
+        'book.name': 'För- och efternamn', 'book.phone': 'Telefonnummer', 'book.email': 'E-post',
+        'book.message': 'Meddelande (valfritt)',
+        'book.gdpr': 'Jag godkänner att mina uppgifter används för att boka min tid i enlighet med integritetspolicyn.',
+        'book.submit': 'Boka min tid',
+        'contact.label': 'Kontakt', 'contact.title': 'Vi finns här för dig',
+        'contact.desc': 'Vill du boka, ändra en tid eller har frågor? Ring oss direkt eller besök oss nära tunnelbanan vid Skanstull.',
+        'contact.phoneLabel': 'Telefon', 'contact.emailLabel': 'E-post', 'contact.addressLabel': 'Adress', 'contact.hoursLabel': 'Öppettider',
+        'contact.hours': 'Mån – Tor: 08:00 – 17:00<br>Fredagar: 08:00 – 13:00',
+        'contact.map': 'Visa på karta – nära Skanstull',
+        'contact.languages': 'Vi talar <strong>Svenska, Engelska, Persiska och Ryska</strong> på kliniken.',
+        'success.title': 'Tack för din bokning!',
+        'success.desc': 'Vi har tagit emot din förfrågan och återkommer inom kort för att bekräfta din tid.',
+        'success.close': 'Stäng'
+      },
+      en: {
+        'nav.services': 'Services',
+        'nav.about': 'About',
+        'nav.book': 'Book',
+        'nav.contact': 'Contact',
+        'nav.bookBtn': 'Book now',
+        'hero.badge': 'Södermalm · Stockholm',
+        'hero.title1': 'Your modern',
+        'hero.title2': 'dental care',
+        'hero.lead': 'Safe and modern dentistry in the heart of Södermalm. From check-ups to emergency appointments – we care for the whole family.',
+        'hero.ctaBook': 'Book online',
+        'hero.ctaCall': 'Call 08 640 82 83',
+        'hero.offerLabel': 'New patient offer',
+        'hero.offerDesc': 'Complete dental exam with AirFlow cleaning. Regular price 1,500 kr. 500 kr off your next treatment.',
+        'hero.offerBtn': 'Book welcome visit',
+        'hero.stat1': 'Happy patients',
+        'hero.stat2': 'Emergency slots',
+        'services.label': 'Our treatments',
+        'services.title': 'Dental care for the whole family',
+        'services.desc': 'We offer a complete range of dental services under one roof – with experienced dentists and hygienists.',
+        'services.s1.title': 'Examination', 'services.s1.desc': 'Detect problems early and prevent future issues with regular check-ups.',
+        'services.s2.title': 'Cosmetic dentistry', 'services.s2.desc': 'Teeth whitening and veneers for a more beautiful, natural smile.',
+        'services.s3.title': 'Dental implants', 'services.s3.desc': 'Safe implant treatment with modern technology and experienced dentists.',
+        'services.s4.title': 'Emergency care', 'services.s4.desc': 'Quick help for toothache, injuries or sudden problems – emergency slots within 24 hours.',
+        'services.s5.title': 'Pediatric dentistry', 'services.s5.desc': 'Gentle, reassuring dental care tailored for young patients.',
+        'services.s6.title': 'Oral surgery', 'services.s6.desc': 'Gentle procedures such as extractions and wisdom tooth removal.',
+        'services.s7.title': 'Crowns & bridges', 'services.s7.desc': 'Durable solutions that restore function and aesthetics.',
+        'services.s8.title': 'Invisible orthodontics', 'services.s8.desc': 'CleanCorrect – clear, removable aligners for straighter teeth.',
+        'about.since': 'Since April 2021 in the same spirit',
+        'about.label': 'About GladDental',
+        'about.title': 'Patient at the centre',
+        'about.desc': 'We combine long experience with modern dentistry and the latest technology. Our goal is to help you prevent problems – so you can enjoy a healthy mouth and a beautiful smile for life.',
+        'about.p1.title': 'Preventive care', 'about.p1.desc': 'Regular check-ups and personal advice for long-term oral health.',
+        'about.p2.title': 'High quality', 'about.p2.desc': 'Evidence-based methods and modern technology in every treatment.',
+        'about.p3.title': 'Personal approach', 'about.p3.desc': 'Empathy, patience and clear communication – you are part of the GladDental family.',
+        'book.label': 'Online booking',
+        'book.title': 'Book your appointment',
+        'book.desc': 'Choose treatment, date and time – we will confirm your booking as soon as possible.',
+        'book.infoTitle': 'Welcome visit – 490 kr',
+        'book.infoDesc': 'As a new patient you receive a full examination including AirFlow cleaning.',
+        'book.li1': 'Complete dental examination', 'book.li2': 'Bitewing X-rays & diagnosis',
+        'book.li3': 'Professional AirFlow cleaning', 'book.li4': 'Personal treatment plan',
+        'book.li5': '500 kr off your next treatment',
+        'book.step1': 'Step 1 – Choose treatment', 'book.step2': 'Step 2 – When suits you?', 'book.step3': 'Step 3 – Your details',
+        'book.service': 'Treatment', 'book.servicePlaceholder': 'Select treatment...',
+        'book.optWelcome': 'Welcome visit (490 kr)', 'book.optCheckup': 'Check-up & cleaning',
+        'book.optEmergency': 'Emergency care', 'book.optImplant': 'Dental implant – consultation',
+        'book.optCosmetic': 'Cosmetic dentistry', 'book.optOrtho': 'Invisible orthodontics', 'book.optOther': 'Other',
+        'book.when': 'Timeframe', 'book.whenWeek': 'This week', 'book.whenNext': 'Next week', 'book.whenLater': 'Further ahead',
+        'book.date': 'Preferred date', 'book.time': 'Preferred time', 'book.timeError': 'Please select a time',
+        'book.name': 'Full name', 'book.phone': 'Phone number', 'book.email': 'Email',
+        'book.message': 'Message (optional)',
+        'book.gdpr': 'I consent to my details being used to book my appointment in accordance with the privacy policy.',
+        'book.submit': 'Book my appointment',
+        'contact.label': 'Contact', 'contact.title': 'We are here for you',
+        'contact.desc': 'Want to book, reschedule or have questions? Call us directly or visit us near Skanstull subway station.',
+        'contact.phoneLabel': 'Phone', 'contact.emailLabel': 'Email', 'contact.addressLabel': 'Address', 'contact.hoursLabel': 'Opening hours',
+        'contact.hours': 'Mon – Thu: 08:00 – 17:00<br>Fridays: 08:00 – 13:00',
+        'contact.map': 'View on map – near Skanstull',
+        'contact.languages': 'We speak <strong>Swedish, English, Persian and Russian</strong> at the clinic.',
+        'success.title': 'Thank you for booking!',
+        'success.desc': 'We have received your request and will get back to you shortly to confirm your appointment.',
+        'success.close': 'Close'
+      }
+    };
+
+    let currentLang = localStorage.getItem('gd-lang') || 'sv';
+
+    function setLang(lang) {
+      currentLang = lang;
+      localStorage.setItem('gd-lang', lang);
+      document.documentElement.lang = lang;
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        const text = i18n[lang][key];
+        if (text !== undefined) {
+          if (text.includes('<')) el.innerHTML = text;
+          else el.textContent = text;
+        }
+      });
+      document.querySelectorAll('.lang-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.lang === lang);
+      });
+      renderTimeSlots();
+    }
+
+    document.querySelectorAll('.lang-btn').forEach(btn => {
+      btn.addEventListener('click', () => setLang(btn.dataset.lang));
+    });
+
+    // Nav scroll
+    const nav = document.getElementById('nav');
+    window.addEventListener('scroll', () => {
+      nav.classList.toggle('scrolled', window.scrollY > 20);
+    }, { passive: true });
+
+    // Mobile menu
+    const menuBtn = document.getElementById('menuBtn');
+    const mobileMenu = document.getElementById('mobileMenu');
+    menuBtn.addEventListener('click', () => {
+      menuBtn.classList.toggle('open');
+      mobileMenu.classList.toggle('open');
+    });
+    mobileMenu.querySelectorAll('a').forEach(a => {
+      a.addEventListener('click', () => {
+        menuBtn.classList.remove('open');
+        mobileMenu.classList.remove('open');
+      });
+    });
+
+    // Reveal on scroll
+    const revealEls = document.querySelectorAll('.reveal');
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.12 });
+    revealEls.forEach(el => observer.observe(el));
+
+    // Time slots
+    const ALL_SLOTS = ['08:00','08:30','09:00','09:30','10:00','10:30','11:00','11:30','12:00','13:00','13:30','14:00','14:30','15:00','15:30','16:00','16:30'];
+    const timeInput = document.getElementById('time');
+    const timeSlotsEl = document.getElementById('timeSlots');
+    const dateInput = document.getElementById('date');
+
+    function isWeekend(d) {
+      const day = d.getDay();
+      return day === 0 || day === 6;
+    }
+
+    function isFriday(d) {
+      return d.getDay() === 5;
+    }
+
+    function getAvailableSlots(dateStr) {
+      if (!dateStr) return ALL_SLOTS;
+      const d = new Date(dateStr + 'T12:00:00');
+      if (isWeekend(d)) return [];
+      const slots = isFriday(d)
+        ? ALL_SLOTS.filter(s => s <= '13:00')
+        : ALL_SLOTS.filter(s => s <= '16:30');
+      const today = new Date();
+      today.setHours(0,0,0,0);
+      if (d.getTime() === today.getTime()) {
+        const now = new Date();
+        return slots.filter(s => {
+          const [h, m] = s.split(':').map(Number);
+          return h > now.getHours() || (h === now.getHours() && m > now.getMinutes());
+        });
+      }
+      return slots;
+    }
+
+    function renderTimeSlots() {
+      const slots = getAvailableSlots(dateInput.value);
+      timeSlotsEl.innerHTML = '';
+      timeInput.value = '';
+      document.querySelectorAll('.time-slot.selected').forEach(s => s.classList.remove('selected'));
+      if (slots.length === 0) {
+        timeSlotsEl.innerHTML = '<p style="grid-column:1/-1;font-size:0.85rem;color:var(--ink-soft)">' +
+          (currentLang === 'sv' ? 'Inga tider tillgängliga detta datum' : 'No slots available on this date') + '</p>';
+        return;
+      }
+      slots.forEach(slot => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'time-slot';
+        btn.textContent = slot;
+        btn.addEventListener('click', () => {
+          timeSlotsEl.querySelectorAll('.time-slot').forEach(s => s.classList.remove('selected'));
+          btn.classList.add('selected');
+          timeInput.value = slot;
+          document.getElementById('timeError').classList.remove('show');
+        });
+        timeSlotsEl.appendChild(btn);
+      });
+    }
+
+    // Min date = today
+    const todayStr = new Date().toISOString().split('T')[0];
+    dateInput.min = todayStr;
+    dateInput.value = todayStr;
+    dateInput.addEventListener('change', renderTimeSlots);
+
+    // When chips
+    document.querySelectorAll('.when-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        document.querySelectorAll('.when-chip').forEach(c => c.classList.remove('selected'));
+        chip.classList.add('selected');
+        const now = new Date();
+        const when = chip.dataset.when;
+        if (when === 'week') {
+          dateInput.value = todayStr;
+        } else if (when === 'next') {
+          const next = new Date(now);
+          next.setDate(next.getDate() + 7);
+          while (isWeekend(next)) next.setDate(next.getDate() + 1);
+          dateInput.value = next.toISOString().split('T')[0];
+        } else {
+          const later = new Date(now);
+          later.setDate(later.getDate() + 14);
+          while (isWeekend(later)) later.setDate(later.getDate() + 1);
+          dateInput.value = later.toISOString().split('T')[0];
+        }
+        renderTimeSlots();
+      });
+    });
+
+    // Booking form
+    document.getElementById('bookingForm').addEventListener('submit', e => {
+      e.preventDefault();
+      const form = e.target;
+      let valid = form.checkValidity();
+      if (!timeInput.value) {
+        document.getElementById('timeError').classList.add('show');
+        valid = false;
+      }
+      if (!valid) {
+        form.reportValidity();
+        return;
+      }
+      const data = Object.fromEntries(new FormData(form));
+      const overlay = document.getElementById('successOverlay');
+      const msg = document.getElementById('successMsg');
+      const dateFormatted = new Date(data.date + 'T12:00:00').toLocaleDateString(currentLang === 'sv' ? 'sv-SE' : 'en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+      if (currentLang === 'sv') {
+        msg.textContent = `Vi har tagit emot din förfrågan för ${dateFormatted} kl. ${data.time}. Vi återkommer inom kort till ${data.email}.`;
+      } else {
+        msg.textContent = `We have received your request for ${dateFormatted} at ${data.time}. We will contact you shortly at ${data.email}.`;
+      }
+      overlay.classList.add('show');
+      form.reset();
+      dateInput.min = todayStr;
+      dateInput.value = todayStr;
+      document.querySelectorAll('.when-chip').forEach(c => c.classList.remove('selected'));
+      renderTimeSlots();
+    });
+
+    document.getElementById('successClose').addEventListener('click', () => {
+      document.getElementById('successOverlay').classList.remove('show');
+    });
+
+    document.getElementById('successOverlay').addEventListener('click', e => {
+      if (e.target.id === 'successOverlay') e.target.classList.remove('show');
+    });
+
+    // Init
+    setLang(currentLang);
+  </script>
+</body>
+</html>
