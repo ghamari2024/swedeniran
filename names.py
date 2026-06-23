@@ -92,3 +92,21 @@ IRANIAN_FIRST_NAMES += [
 ]
 
 IRANIAN_FIRST_NAMES = sorted(dict.fromkeys(IRANIAN_FIRST_NAMES), key=str.lower)
+
+
+# Common Iranian/Persian surnames for prospect discovery by family name.
+# Mix of distinctly-Persian (city/heritage based) and high-frequency surnames;
+# the iranian_score still filters non-Iranian hits.
+IRANIAN_SURNAMES = [
+    "Mohammadi", "Hosseini", "Ahmadi", "Karimi", "Rahimi", "Moradi",
+    "Rezaei", "Hashemi", "Jafari", "Kazemi", "Mousavi", "Bagheri",
+    "Tehrani", "Esfahani", "Shirazi", "Tabrizi", "Azizi", "Rostami",
+    "Sadeghi", "Akbari", "Soltani", "Naderi", "Heydari", "Nazari",
+    "Yousefi", "Amini", "Ebrahimi", "Asadi", "Ghorbani", "Abbasi",
+    "Salehi", "Mahmoudi", "Taheri", "Zarei", "Najafi", "Alavi",
+    "Ansari", "Bahrami", "Ghasemi", "Habibi", "Jalali", "Kamali",
+    "Mirzaei", "Rashidi", "Sharifi", "Vahidi", "Zamani", "Nouri",
+    "Kiani", "Daneshvar",
+]
+
+IRANIAN_SURNAMES = sorted(dict.fromkeys(IRANIAN_SURNAMES), key=str.lower)

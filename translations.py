@@ -425,3 +425,295 @@ def industry_filter_value(label_or_sv: str) -> str | None:
     if label_or_sv in INDUSTRY_TRANSLATIONS:
         return label_or_sv
     return _INDUSTRY_EN_TO_SV.get(label_or_sv.lower())
+
+
+# ---------------------------------------------------------------------------
+# Business categories
+#
+# Every allabolag industry is folded into one high-level business category so a
+# person can be bucketed at a glance. A person can touch several industries, so
+# their *primary* category is picked via CATEGORY_PRIORITY (specific trades win
+# over generic catch-alls like real estate / holding / consulting). Anything
+# that maps to no category falls back to "other".
+# Membership is keyed by the English industry label; raw Swedish values are
+# normalized through INDUSTRY_TRANSLATIONS before lookup.
+# ---------------------------------------------------------------------------
+
+CATEGORY_LABELS: dict[str, str] = {
+    "dental": "Dental",
+    "healthcare": "Healthcare",
+    "automotive": "Automotive & Vehicles",
+    "food_restaurants": "Food & Restaurants",
+    "beauty_cosmetics": "Beauty & Cosmetics",
+    "construction": "Construction & Trades",
+    "transport_logistics": "Transport & Logistics",
+    "it_tech": "IT & Technology",
+    "education": "Education",
+    "media_creative": "Media & Creative",
+    "agriculture_nature": "Agriculture & Nature",
+    "energy_environment": "Energy & Environment",
+    "sports_leisure": "Sports & Leisure",
+    "hospitality_travel": "Hospitality & Travel",
+    "manufacturing_industry": "Manufacturing & Industry",
+    "cleaning_facility": "Cleaning & Facility",
+    "staffing_hr": "Staffing & HR",
+    "retail_ecommerce": "Retail & E-commerce",
+    "finance": "Finance & Accounting",
+    "consulting_professional": "Consulting & Professional",
+    "wholesale_distribution": "Wholesale & Distribution",
+    "real_estate": "Real Estate & Property",
+    "public_orgs": "Public & Organizations",
+    "other": "Other",
+}
+
+CATEGORY_LABELS_FA: dict[str, str] = {
+    "dental": "دندان‌پزشکی",
+    "healthcare": "سلامت و درمان",
+    "automotive": "خودرو و وسایل نقلیه",
+    "food_restaurants": "غذا و رستوران",
+    "beauty_cosmetics": "زیبایی و آرایشی",
+    "construction": "ساخت‌وساز و تأسیسات",
+    "transport_logistics": "حمل‌ونقل و لجستیک",
+    "it_tech": "فناوری اطلاعات",
+    "education": "آموزش",
+    "media_creative": "رسانه و خلاقیت",
+    "agriculture_nature": "کشاورزی و طبیعت",
+    "energy_environment": "انرژی و محیط‌زیست",
+    "sports_leisure": "ورزش و سرگرمی",
+    "hospitality_travel": "هتل و گردشگری",
+    "manufacturing_industry": "تولید و صنعت",
+    "cleaning_facility": "نظافت و خدمات",
+    "staffing_hr": "کاریابی و منابع انسانی",
+    "retail_ecommerce": "خرده‌فروشی و آنلاین‌شاپ",
+    "finance": "مالی و حسابداری",
+    "consulting_professional": "مشاوره و خدمات حرفه‌ای",
+    "wholesale_distribution": "عمده‌فروشی و توزیع",
+    "real_estate": "املاک و مستغلات",
+    "public_orgs": "نهادها و سازمان‌ها",
+    "other": "سایر",
+}
+
+# Specific business beats generic catch-alls when a person spans many sectors.
+CATEGORY_PRIORITY: list[str] = [
+    "dental", "healthcare", "automotive", "food_restaurants", "beauty_cosmetics",
+    "construction", "transport_logistics", "it_tech", "education", "media_creative",
+    "agriculture_nature", "energy_environment", "sports_leisure", "hospitality_travel",
+    "manufacturing_industry", "cleaning_facility", "staffing_hr", "retail_ecommerce",
+    "finance", "consulting_professional", "wholesale_distribution", "real_estate",
+    "public_orgs",
+]
+
+_CATEGORY_MEMBERS: dict[str, list[str]] = {
+    "dental": ["Dentists", "Tandtekniska arbeten"],
+    "healthcare": [
+        "Healthcare services", "Healthcare", "Doctors", "Care and nursing",
+        "Pharmacy products, medicines - distribution", "Pharmacy products, medicines - wholesale",
+        "Pharmaceuticals", "Medical technology equipment", "Medical technology equipment - manufacturing",
+        "Veterinarians", "Optics and optical equipment", "Biotechnology", "Laboratory analyses",
+        "Health food, natural remedies",
+    ],
+    "automotive": [
+        "Cars", "Cars - manufacturing", "Car repairs", "Car spare parts", "Vehicle repairs",
+        "Body shops and workshops", "Trucks and trailers", "Motorcycles, mopeds and scooters",
+        "Caravans and motorhomes", "Other vehicles", "Gas stations", "Fuel - wholesale and retail",
+        "Bilvård",
+    ],
+    "food_restaurants": [
+        "Restaurants", "Food products", "Food products - agencies and wholesalers",
+        "Food products - manufacturing", "Catering", "Fruit deliveries, water deliveries",
+        "Beverages", "Meat and butcher products", "Fruit, berries and vegetables - wholesalers",
+        "Meat and butcher products - wholesale", "Coffee and tea - agencies", "Dairy products",
+        "Dairy products - wholesale", "Fish and shellfish", "Mineral water",
+        "Restaurant and commercial kitchen equipment", "Vinagenturer, spritagenturer",
+    ],
+    "beauty_cosmetics": [
+        "Skincare products", "Cosmetics, perfume and hairdressing products",
+        "Cosmetics - manufacturers and wholesalers",
+    ],
+    "construction": [
+        "Building contractors", "Construction contracts - infrastructure", "Carpentry work",
+        "Electrical installations", "Painting work", "Roofing work", "Roof coverings",
+        "Demolition work", "Plumbing work, materials and products", "Sheet metal workshops",
+        "Ventilation and air treatment", "Contractors", "Glazing work", "Stonework", "Stone",
+        "Building materials", "Lumber and building materials", "Timber and building materials - wholesale",
+        "Doors and gates", "Windows", "Floor coverings", "Tiles - manufacturing", "Tiles and clinker",
+        "Concrete products - manufacturing", "Concrete and concrete products", "Insulation contractors",
+        "Earthmoving and construction machinery work", "Groundworks and civil engineering contractors",
+        "Road equipment, traffic systems and road works", "Kitchen interiors", "Office interiors",
+        "Building glass", "Marine contractors", "Paints, varnishes, wallpaper",
+        "Paints, varnishes, wallpaper - manufacturing", "Wallpaper", "Locks",
+        "Locks and fittings - manufacturing", "Ironmongery", "Badrumsinredningar, badrumsrenoveringar",
+        "Plaster- Helfabrikat, beställningsarbeten", "Entreprenadmaskiner",
+    ],
+    "transport_logistics": [
+        "Transport brokerage", "Taxi", "Passenger transport", "Haulage companies",
+        "Courier operations", "Courier service", "Moving companies", "Freight forwarding",
+        "Logistics", "Loading and unloading", "Bus traffic, car traffic", "Warehousing", "Airports",
+    ],
+    "it_tech": [
+        "IT consultants", "Internet consultants and operators", "Software",
+        "Software and systems development", "Data centers", "Computers", "Computers - peripherals",
+        "Computers - service", "Computers and peripherals - wholesale",
+        "Computers and peripherals - manufacturing", "Computer and TV games", "IT - other",
+        "Telecommunications and telecom operators", "Office and telecom services",
+        "Data/IT consultants - industry specialists",
+    ],
+    "education": [
+        "Schools and education", "Colleges and universities", "Driving schools", "Daycare",
+        "Preschools", "Primary schools", "Vocational schools", "Cultural schools and education",
+        "Utbildning",
+    ],
+    "media_creative": [
+        "Video and film - recording and production", "Sound and music production",
+        "Sound, lighting and image equipment", "Photographers", "Photo equipment",
+        "Publishing agencies", "Newspapers", "Printing houses", "Radio and TV production companies",
+        "Radio, TV, video", "Music", "Art and gallery activities", "Artists", "Media brokerage",
+        "Medieförmedling, -reklamförsäljning", "News services and wire agencies", "Bookbinders",
+        "Transit advertising", "Film and music distribution", "Biografer", "Reproduction services",
+    ],
+    "agriculture_nature": [
+        "Agriculture", "Agriculture - crop farming", "Agriculture - other services",
+        "Agriculture - livestock and animal husbandry", "Agriculture - crops and livestock",
+        "Forestry services", "Livestock", "Live animals", "Live animals - wholesale", "Animal feed",
+        "Horse keeping", "Fish farming, shellfish farming, sport fishing",
+        "Hunting, game and nature conservation", "Gardening and landscaping", "Parks and green spaces",
+        "Mushroom farming", "Potato farming", "Grain, raw tobacco, seed and animal feed - wholesalers",
+        "Agricultural products, textile raw materials and animals - agency",
+        "Agricultural machinery and supplies", "Agricultural machinery and supplies - wholesale",
+    ],
+    "energy_environment": [
+        "Energy supply", "Renewable energy", "Energy trading", "District heating",
+        "Environmental technology", "Environmental care and consultants", "Oils and oil products",
+        "Oils and oil products - services", "Gas production", "Bioenergi", "Energieffektivisering",
+        "Elapparater",
+    ],
+    "sports_leisure": [
+        "Sports", "Sports facilities", "Sports teams and clubs", "Golf courses", "Race tracks",
+        "Leisure boats and equipment", "Boat yards, boat builders", "Skidsportanläggningar",
+        "Museums", "Historic monuments and buildings",
+    ],
+    "hospitality_travel": [
+        "Hotels", "Travel", "Conference organizers", "Conference and training venues",
+        "Event production", "Amusement parks",
+    ],
+    "manufacturing_industry": [
+        "Producers", "Electronics and telecom equipment", "Electronics - contract manufacturing",
+        "Electronics - production equipment", "Electronics - system components",
+        "Electronics - manufacturing", "Metals and alloys", "Metals and alloys - production",
+        "Metals and alloys - repair", "Metallurgical industry", "Järn, stål",
+        "Chemicals, industrial chemicals", "Chemicals, industrial chemicals - manufacturing",
+        "Machine supplies", "Machine supplies - manufacturing", "Machine supplies - repairs",
+        "Tools and equipment", "Tools and equipment - manufacturing",
+        "Rubber and plastic products - manufacturing", "Rubber goods", "Furniture - production",
+        "Textiles - production", "Clothing - manufacturing", "Shoes and accessories - manufacturing",
+        "Leather and leather goods - manufacturing", "Textile processing", "Mining and quarrying",
+        "Mining and quarrying - services", "Minerals - manufacturing", "Mineral processing",
+        "Glass and glass products", "Batteries", "Batteries - manufacturing",
+        "Electric motors and generators", "Electric motors and generators - manufacturing",
+        "Electrical equipment", "Electrical installation materials - manufacturing",
+        "Electrical materials - repairs", "Electromechanical workshops", "Mekaniska verkstäder",
+        "Cables and power lines", "Cables and power lines - manufacturing", "Safes and vaults",
+        "Gases and equipment", "Other manufacturing", "Other equipment - repair", "Repair services",
+        "Paper products", "Paper products - production", "Sawmills", "Timber products",
+        "Timber products - production", "Aircraft and equipment", "Aircraft equipment - manufacturing",
+        "Aircraft equipment - repair and maintenance", "Railway and tramway equipment",
+        "Railway and tramway equipment - manufacturing", "Refrigeration and freezing equipment",
+        "Refrigeration equipment - manufacturing", "Optics and optical equipment - production",
+        "Costume jewelry - manufacturing", "Watches and clocks - manufacturing",
+        "Household appliances - manufacturing", "Gaming and amusement equipment",
+        "Gaming and amusement equipment - manufacturing", "Gaming and lottery equipment",
+        "Sports - manufacturing", "Lighting fixtures - components", "Packaging", "Packaging services",
+        "Borstar, penslar", "Borstar, penslar - tillverkning", "Vapen", "Vapen - tillverkning",
+    ],
+    "cleaning_facility": [
+        "Cleaning services", "Laundries", "Waste management", "Waste - wholesalers",
+        "Sanitation contractors, waste management", "Recycling", "Chimney cleaning and maintenance",
+        "Security companies", "Cleaning products", "Plant service, office plant care",
+    ],
+    "staffing_hr": ["Staffing services", "Recruitment", "Human resources, HR"],
+    "retail_ecommerce": [
+        "Retail", "Retail trade", "Retail - other", "Retail trade - other", "Mail order / e-commerce",
+        "Apparel", "Clothing and shoes", "Clothing", "Shoes", "Shoes - retailers",
+        "Gold, silver, precious stones", "Watches and clocks", "Watchmakers", "Furniture",
+        "Furniture, interiors, kitchen and lighting equipment", "Books, paper, newspapers and flyers",
+        "Antiques", "Flowers, plants and accessories", "Tobacco", "Household appliances",
+        "Household appliances, radio, TV, CD and musical instruments", "Costume jewelry",
+        "Office supplies", "Carpets", "Leather and leather goods",
+        "Leather, shoes, interiors, travel goods and textiles", "Travel goods", "Fur goods",
+        "Musical instruments", "Shop interiors and equipment",
+    ],
+    "finance": [
+        "Finance companies, financial services", "Accounting and bookkeeping", "Tax advisory",
+        "Securities trading", "Banks", "Insurance", "Venture capital firms",
+        "Debt collection and credit reporting", "Holding companies", "Auditing",
+    ],
+    "consulting_professional": [
+        "Consultants", "Engineering consultants", "Business development", "Advertising agencies",
+        "Architects", "Law firms", "Translation services", "Marketing consultants", "Research",
+        "Project management", "Professional, scientific and technical activities",
+        "Information and communications consultants", "Organizational consultants", "Market research",
+        "Designers", "Industrial designers", "Patent agencies", "Technical testing and analysis",
+        "Other business services", "Office services", "Private service providers", "Corporate branding",
+        "Business information", "Documentation, information", "Managementkonsulter",
+        "Säkerhetssystem, säkerhetskonsulter", "Telemarketing",
+    ],
+    "wholesale_distribution": [
+        "Wholesalers", "Distribution", "Agencies", "Agency trade - other", "Intermediate goods",
+        "Intermediate goods - wholesalers", "Industrial supplies", "Tobacco - wholesale",
+        "Household appliances - wholesalers", "Textiles", "Textiles - wholesale", "Textiles - agency",
+        "Hides, leather and fur goods", "Hides, leather and fur goods - wholesalers",
+        "Furniture, household goods and ironmongery - agency",
+        "Machinery, production, ships and aircraft - agency", "Metals and alloys - wholesale",
+        "Chemicals, industrial chemicals - wholesale", "Kitchen interiors - agency and wholesale",
+        "Sports - wholesale", "Electronics and telecom equipment - wholesale",
+    ],
+    "real_estate": [
+        "Property companies, commercial premises", "Housing cooperative", "Property management",
+        "Real estate agents", "Housing", "Houses", "Property management and maintenance",
+        "Fastighetsutveckling",
+    ],
+    "public_orgs": [
+        "Public administration", "Associations", "International organizations",
+        "Embassies, consulates and trade offices in Sweden", "Religösa organisationer",
+        "Social insurance agency", "Refugee accommodation", "Labour market and business agencies",
+    ],
+}
+
+_INDUSTRY_TO_CATEGORY: dict[str, str] = {
+    label: cat for cat, labels in _CATEGORY_MEMBERS.items() for label in labels
+}
+
+
+def category_label(category_id: str | None) -> str:
+    return CATEGORY_LABELS.get(category_id or "other", CATEGORY_LABELS["other"])
+
+
+def category_options() -> list[dict[str, str]]:
+    """Ordered category metadata for the UI (display order = priority, then other)."""
+    order = CATEGORY_PRIORITY + ["other"]
+    return [
+        {"id": cid, "label": CATEGORY_LABELS[cid], "label_fa": CATEGORY_LABELS_FA[cid]}
+        for cid in order
+    ]
+
+
+def primary_category(industries: list[str] | None) -> str:
+    """Pick a person's single primary business category from their industries.
+
+    Each raw industry is normalized to English, mapped to a category, then the
+    highest-priority matched category wins. Returns "other" when nothing maps.
+    """
+    matched: set[str] = set()
+    for raw in industries or []:
+        if not raw:
+            continue
+        en = INDUSTRY_TRANSLATIONS.get(str(raw), str(raw))
+        cat = _INDUSTRY_TO_CATEGORY.get(en)
+        if cat:
+            matched.add(cat)
+    if not matched:
+        return "other"
+    for cid in CATEGORY_PRIORITY:
+        if cid in matched:
+            return cid
+    return "other"

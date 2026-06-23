@@ -1,6 +1,7 @@
 const state = {
   activePage: "people",
   peopleView: "main",
+  category: "",
   searches: [],
   names: [],
   stats: {},
@@ -17,11 +18,26 @@ const state = {
   sortDir: "desc",
   modalPersonId: null,
   modalPerson: null,
+  crmView: "new",
+  campaigns: [],
+  crmDetail: null,
+  crmRefineDrafts: {},
+  crmAgentStatus: null,
+  crmCandidates: { total: 0, companies: [] },
+  crmCategory: "",
+  crmSelectedOrgnrs: new Set(),
+  crmLoadedCampaignId: null,
+  crmOffset: 0,
+  crmLimit: 50,
+  crmTotal: 0,
+  crmSortKey: "revenue_ksek",
+  crmSortDir: "desc",
 };
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 let peopleRefreshTimer = null;
+let crmRefreshTimer = null;
 
 async function api(path, options) {
   const res = await fetch(path, options);
@@ -111,6 +127,9 @@ async function refreshAll() {
       if (!state.filterOptions) state.filterOptions = await api("/api/people/enriched/options");
       await refreshPeopleData(false);
       if (state.peopleView === "favorites") refreshCompanyDeepStatus();
+    } else if (state.activePage === "crm") {
+      if (!state.filterOptions) state.filterOptions = await api("/api/people/enriched/options");
+      await refreshCrmPage(false);
     } else {
       renderCommandCenter();
       if (state.selectedName) await renderCommandDetail(state.selectedName.name);
@@ -125,8 +144,10 @@ function renderGlobal() {
   $("#pauseBtn").textContent = state.workerPaused ? "Resume worker" : "Pause worker";
   $("#peopleTab").classList.toggle("active", state.activePage === "people");
   $("#commandTab").classList.toggle("active", state.activePage === "command");
+  $("#crmTab").classList.toggle("active", state.activePage === "crm");
   $("#peoplePage").classList.toggle("active", state.activePage === "people");
   $("#commandPage").classList.toggle("active", state.activePage === "command");
+  $("#crmPage").classList.toggle("active", state.activePage === "crm");
 }
 
 function filtersAreActive() {
@@ -142,7 +163,49 @@ function filtersAreActive() {
 
 function renderPeoplePage() {
   if (!filtersAreActive()) rebuildFilterOptions();
+  renderCategoryBar();
   renderPeopleTable();
+}
+
+const CATEGORY_EMOJI = {
+  dental: "🦷", healthcare: "🏥", automotive: "🚗", food_restaurants: "🍽",
+  beauty_cosmetics: "💄", construction: "🏗", transport_logistics: "🚚",
+  it_tech: "💻", education: "🎓", media_creative: "🎬", agriculture_nature: "🌾",
+  energy_environment: "⚡", sports_leisure: "⚽", hospitality_travel: "🏨",
+  manufacturing_industry: "🏭", cleaning_facility: "🧹", staffing_hr: "👥",
+  retail_ecommerce: "🛒", finance: "💰", consulting_professional: "📋",
+  wholesale_distribution: "📦", real_estate: "🏢", public_orgs: "🏛", other: "❓",
+};
+
+function renderCategoryBar() {
+  const bar = $("#categoryBar");
+  if (!bar) return;
+  const cats = (state.filterOptions && state.filterOptions.categories) || [];
+  if (!cats.length) {
+    bar.innerHTML = "";
+    return;
+  }
+  const sorted = [...cats].sort((a, b) => (b.count || 0) - (a.count || 0));
+  const total = sorted.reduce((sum, c) => sum + (c.count || 0), 0);
+  const buttons = [
+    `<button type="button" class="cat-chip${state.category === "" ? " active" : ""}" data-cat="">All <span class="cat-count">${total}</span></button>`,
+  ];
+  for (const c of sorted) {
+    const emoji = CATEGORY_EMOJI[c.id] || "";
+    buttons.push(
+      `<button type="button" class="cat-chip${state.category === c.id ? " active" : ""}" data-cat="${esc(c.id)}" title="${esc(c.label)}">${emoji} ${esc(c.label)} <span class="cat-count">${c.count || 0}</span></button>`
+    );
+  }
+  bar.innerHTML = buttons.join("");
+  bar.querySelectorAll(".cat-chip").forEach((btn) => {
+    btn.onclick = () => setCategory(btn.dataset.cat);
+  });
+}
+
+function setCategory(cat) {
+  state.category = cat || "";
+  renderCategoryBar();
+  refreshPeopleData(true);
 }
 
 async function refreshPeopleData(resetPage = false) {
@@ -178,6 +241,7 @@ function peopleQueryParams() {
   add("age_max", f.ageMax);
   add("year", f.year);
   add("industry", f.industry);
+  add("category", state.category);
   add("county", f.county);
   add("company_type", f.type);
   add("gender", f.gender);
@@ -254,6 +318,8 @@ function clearAllFilters() {
   $("#hasRevenue").checked = false;
   $("#activeOnly").checked = false;
   $("#hasEmployees").checked = false;
+  state.category = "";
+  renderCategoryBar();
   refreshPeopleData(true);
 }
 
@@ -698,7 +764,7 @@ async function handlePersonAction(action, personId, isFavorite) {
 
 function setPeopleView(view) {
   state.peopleView = view;
-  $$(".view-tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.view === view));
+  $$(".people-view-tabs .view-tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.view === view));
   $("#favoritesActionBar")?.classList.toggle("hidden", view !== "favorites");
   if (view === "favorites") refreshCompanyDeepStatus();
   refreshPeopleData(true);
@@ -706,19 +772,27 @@ function setPeopleView(view) {
 
 async function refreshCompanyDeepStatus() {
   try {
-    const s = await api("/api/company-deep/status");
+    const [s, p] = await Promise.all([
+      api("/api/company-deep/status"),
+      api("/api/person-deep/status").catch(() => null),
+    ]);
     const el = $("#companyDeepStatus");
     if (!el) return;
-    const done = s.done || 0;
-    const queued = s.queued || 0;
-    const running = s.running || 0;
-    const error = s.error || 0;
     const total = s.favorites_total || 0;
-    const parts = [`${done}/${total} done`];
-    if (running) parts.push(`${running} running`);
-    if (queued) parts.push(`${queued} queued`);
-    if (error) parts.push(`${error} error`);
-    el.textContent = parts.join(" · ");
+    const cParts = [`Companies ${s.done || 0}/${total}`];
+    if (s.running) cParts.push(`${s.running} running`);
+    if (s.queued) cParts.push(`${s.queued} queued`);
+    if (s.retry) cParts.push(`${s.retry} retry`);
+    let text = cParts.join(" · ");
+    if (p) {
+      const pParts = [`Persons ${p.done || 0}/${p.favorites_total || 0}`];
+      if (p.running) pParts.push(`${p.running} running`);
+      if (p.queued) pParts.push(`${p.queued} queued`);
+      if (p.retry) pParts.push(`${p.retry} retry`);
+      if (p.company_phase_pending) pParts.push(`waiting on companies (${p.company_phase_pending})`);
+      text += "  |  " + pParts.join(" · ");
+    }
+    el.textContent = text;
   } catch (err) {
     /* ignore */
   }
@@ -996,7 +1070,618 @@ function confirmDeleteCode(message) {
 function switchPage(page) {
   state.activePage = page;
   if (page === "people") state.commandPeople = [];
+  if (page === "crm" && state.crmView === "list" && !state.crmDetail) setCrmView("list");
   refreshAll();
+}
+
+function crmStatusLabel(status) {
+  return {
+    idle: "Idle",
+    pending: "Queued",
+    generating: "Generating",
+    generated: "Generated",
+    improve_requested: "Improve queued",
+    improving: "Improving",
+    error: "Error",
+    draft: "Draft",
+    ready: "Ready",
+    running: "Running",
+  }[status] || status || "—";
+}
+
+function renderCrmCategoryBar() {
+  const bar = $("#crmCategoryBar");
+  if (!bar) return;
+  const cats = (state.filterOptions && state.filterOptions.categories) || [];
+  if (!cats.length) {
+    bar.innerHTML = "";
+    return;
+  }
+  const sorted = [...cats].sort((a, b) => (b.count || 0) - (a.count || 0));
+  const total = sorted.reduce((sum, c) => sum + (c.count || 0), 0);
+  const buttons = [
+    `<button type="button" class="cat-chip${state.crmCategory === "" ? " active" : ""}" data-cat="">All <span class="cat-count">${total}</span></button>`,
+  ];
+  for (const c of sorted) {
+    const emoji = CATEGORY_EMOJI[c.id] || "";
+    buttons.push(
+      `<button type="button" class="cat-chip${state.crmCategory === c.id ? " active" : ""}" data-cat="${esc(c.id)}" title="${esc(c.label)}">${emoji} ${esc(c.label)} <span class="cat-count">${c.count || 0}</span></button>`
+    );
+  }
+  bar.innerHTML = buttons.join("");
+  bar.querySelectorAll(".cat-chip").forEach((btn) => {
+    btn.onclick = () => setCrmCategory(btn.dataset.cat);
+  });
+}
+
+function setCrmCategory(cat) {
+  state.crmCategory = cat || "";
+  state.crmSelectedOrgnrs.clear();
+  state.crmOffset = 0;
+  renderCrmCategoryBar();
+  refreshCrmCandidates(true).catch(console.warn);
+}
+
+function crmFilters() {
+  const number = (id) => {
+    const v = $(id)?.value;
+    return v === "" || v == null ? null : Number(v);
+  };
+  return {
+    revMin: number("#crmRevMin"),
+    revMax: number("#crmRevMax"),
+    empMin: number("#crmEmpMin"),
+    empMax: number("#crmEmpMax"),
+    ageMin: number("#crmAgeMin"),
+    ageMax: number("#crmAgeMax"),
+    year: $("#crmYearFilter")?.value || "",
+    industry: $("#crmIndustryFilter")?.value || "",
+    county: $("#crmCountyFilter")?.value || "",
+    type: $("#crmTypeFilter")?.value || "",
+    gender: $("#crmGenderFilter")?.value || "",
+    hasRevenue: $("#crmHasRevenue")?.checked || false,
+    activeOnly: $("#crmActiveOnly")?.checked || false,
+    hasEmployees: $("#crmHasEmployees")?.checked || false,
+    text: ($("#crmTextFilter")?.value || "").trim().toLowerCase(),
+  };
+}
+
+function crmQueryParams() {
+  const f = crmFilters();
+  const params = new URLSearchParams({
+    limit: String(state.crmLimit),
+    offset: String(state.crmOffset),
+    sort_key: state.crmSortKey,
+    sort_dir: state.crmSortDir,
+    view: "main",
+  });
+  const add = (key, value) => {
+    if (value !== null && value !== undefined && value !== "") params.set(key, String(value));
+  };
+  add("category", state.crmCategory);
+  add("rev_min", f.revMin);
+  add("rev_max", f.revMax);
+  add("emp_min", f.empMin);
+  add("emp_max", f.empMax);
+  add("age_min", f.ageMin);
+  add("age_max", f.ageMax);
+  add("year", f.year);
+  add("industry", f.industry);
+  add("county", f.county);
+  add("company_type", f.type);
+  add("gender", f.gender);
+  add("text", f.text);
+  if (f.hasRevenue) params.set("has_revenue", "true");
+  if (f.activeOnly) params.set("active_only", "true");
+  if (f.hasEmployees) params.set("has_employees", "true");
+  return params;
+}
+
+function rebuildCrmFilterOptions() {
+  const opts = state.filterOptions || {};
+  fillSelect("#crmYearFilter", "Any year", opts.years || []);
+  fillSelect("#crmIndustryFilter", "Any industry", opts.industries || []);
+  fillSelect("#crmCountyFilter", "Any county", opts.counties || []);
+  fillSelect("#crmTypeFilter", "Any type", opts.company_types || []);
+}
+
+function renderCrmFilterSummary(f = crmFilters()) {
+  const items = [];
+  if (state.crmCategory) {
+    const cat = (state.filterOptions?.categories || []).find((c) => c.id === state.crmCategory);
+    if (cat) items.push(cat.label);
+  }
+  if (f.revMin != null) items.push(`Revenue >= ${f.revMin}M`);
+  if (f.revMax != null) items.push(`Revenue <= ${f.revMax}M`);
+  if (f.year) items.push(`Year ${f.year}`);
+  if (f.industry) items.push(f.industry);
+  if (f.county) items.push(f.county);
+  if (f.type) items.push(f.type);
+  if (f.empMin != null) items.push(`Employees >= ${f.empMin}`);
+  if (f.empMax != null) items.push(`Employees <= ${f.empMax}`);
+  if (f.ageMin != null) items.push(`Age >= ${f.ageMin}`);
+  if (f.ageMax != null) items.push(`Age <= ${f.ageMax}`);
+  if (f.gender) items.push(f.gender === "M" ? "Male" : "Female");
+  if (f.hasRevenue) items.push("Has revenue");
+  if (f.activeOnly) items.push("Active");
+  if (f.hasEmployees) items.push("Has employees");
+  if (f.text) items.push(`Text: ${f.text}`);
+  $("#crmActiveFilterCount").textContent = items.length;
+  $("#crmFilterSummary").textContent = items.length
+    ? items.slice(0, 4).join(" · ") + (items.length > 4 ? ` +${items.length - 4}` : "")
+    : "No filters active";
+  $("#crmClearFiltersBtn")?.classList.toggle("hidden", items.length === 0);
+}
+
+function clearCrmFilters() {
+  $("#crmTextFilter").value = "";
+  $("#crmRevMin").value = "";
+  $("#crmRevMax").value = "";
+  $("#crmYearFilter").value = "";
+  $("#crmIndustryFilter").value = "";
+  $("#crmCountyFilter").value = "";
+  $("#crmTypeFilter").value = "";
+  $("#crmEmpMin").value = "";
+  $("#crmEmpMax").value = "";
+  $("#crmAgeMin").value = "";
+  $("#crmAgeMax").value = "";
+  $("#crmGenderFilter").value = "";
+  $("#crmHasRevenue").checked = false;
+  $("#crmActiveOnly").checked = false;
+  $("#crmHasEmployees").checked = false;
+  refreshCrmCandidates(true).catch(console.warn);
+}
+
+function updateCrmSelectionUi() {
+  const count = state.crmSelectedOrgnrs.size;
+  if ($("#crmSelectedCount")) $("#crmSelectedCount").textContent = `${count} selected`;
+  const allShown = state.crmCandidates.companies || [];
+  const selectAll = $("#crmSelectAll");
+  if (selectAll) {
+    selectAll.checked = allShown.length > 0 && allShown.every((c) => state.crmSelectedOrgnrs.has(c.orgnr));
+  }
+}
+
+
+function renderCrmCandidatesTable() {
+  renderCrmFilterSummary();
+  const rows = state.crmCandidates.companies || [];
+  const start = state.crmTotal ? state.crmOffset + 1 : 0;
+  const end = Math.min(state.crmOffset + rows.length, state.crmTotal);
+  const page = Math.floor(state.crmOffset / state.crmLimit) + 1;
+  const pages = Math.max(1, Math.ceil(state.crmTotal / state.crmLimit));
+  $("#crmVisibleCount").textContent = `Showing ${start}-${end} of ${state.crmTotal} companies`;
+  $("#crmPageStatus").textContent = `Page ${page} / ${pages}`;
+  $("#crmPrevPageBtn").disabled = state.crmOffset <= 0;
+  $("#crmFirstPageBtn").disabled = state.crmOffset <= 0;
+  $("#crmNextPageBtn").disabled = state.crmOffset + state.crmLimit >= state.crmTotal;
+  $("#crmLastPageBtn").disabled = state.crmOffset + state.crmLimit >= state.crmTotal;
+  $("#crmPageSize").value = String(state.crmLimit);
+  const body = $("#crmCompaniesPickBody");
+  if (!body) return;
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="7" class="empty">No matching companies.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map((c) => {
+    const checked = state.crmSelectedOrgnrs.has(c.orgnr) ? " checked" : "";
+    const loc = [c.municipality, c.county].filter(Boolean).join(", ") || "—";
+    return `
+      <tr class="rich-row crm-pick-row${checked ? " selected-row" : ""}" data-orgnr="${esc(c.orgnr)}">
+        <td><input type="checkbox" class="crm-pick-check" data-orgnr="${esc(c.orgnr)}"${checked}></td>
+        <td class="person-cell rich-person">
+          <strong>${esc(c.company_name || c.orgnr)}</strong>
+          <small>${esc(c.orgnr)}${c.website ? ` · <a href="${esc(c.website)}" target="_blank" rel="noopener">website</a>` : ""}</small>
+          <small class="id-line">${esc(c.company_type || c.status || "—")}</small>
+        </td>
+        <td class="metric-cell">
+          <strong>${fmtMoney(c.revenue_ksek)}</strong>
+          <small>${c.employees ? esc(c.employees) + " emp" : "employees —"}</small>
+        </td>
+        <td class="metric-cell"><strong>${esc(c.revenue_year || "—")}</strong></td>
+        <td class="metric-cell"><strong>${fmtMoney(c.profit_ksek)}</strong></td>
+        <td class="chips-cell">${fmtList(c.industries, 4)}</td>
+        <td class="metric-cell"><strong>${esc(loc)}</strong></td>
+      </tr>
+    `;
+  }).join("");
+  body.querySelectorAll(".crm-pick-check").forEach((box) => {
+    box.onchange = () => {
+      if (box.checked) state.crmSelectedOrgnrs.add(box.dataset.orgnr);
+      else state.crmSelectedOrgnrs.delete(box.dataset.orgnr);
+      box.closest("tr")?.classList.toggle("selected-row", box.checked);
+      updateCrmSelectionUi();
+    };
+  });
+  body.querySelectorAll(".crm-pick-row").forEach((row) => {
+    row.onclick = (e) => {
+      if (e.target.closest("a, input, button")) return;
+      const box = row.querySelector(".crm-pick-check");
+      if (!box) return;
+      box.checked = !box.checked;
+      box.dispatchEvent(new Event("change"));
+    };
+  });
+  updateCrmSelectionUi();
+}
+
+async function refreshCrmCandidates(resetPage = false) {
+  if (resetPage) state.crmOffset = 0;
+  rebuildCrmFilterOptions();
+  renderCrmCategoryBar();
+  const body = $("#crmCompaniesPickBody");
+  if (body) body.innerHTML = '<tr><td colspan="7" class="empty">Loading companies...</td></tr>';
+  try {
+    const data = await api(`/api/campaigns/candidates?${crmQueryParams()}`);
+    state.crmCandidates = data;
+    state.crmTotal = data.total || 0;
+    state.crmLimit = data.limit || state.crmLimit;
+    state.crmOffset = data.offset || 0;
+    renderCrmCandidatesTable();
+  } catch (err) {
+    if (body) body.innerHTML = `<tr><td colspan="7" class="empty">Could not load companies: ${esc(err.message)}</td></tr>`;
+    updateCrmSelectionUi();
+  }
+}
+
+function scheduleCrmRefresh() {
+  window.clearTimeout(crmRefreshTimer);
+  crmRefreshTimer = window.setTimeout(() => refreshCrmCandidates(true), 250);
+}
+
+async function refreshCrmPage(loadCandidates) {
+  if (state.crmView === "new") {
+    $("#crmNewPanel").classList.remove("hidden");
+    $("#crmListPanel").classList.add("hidden");
+    $("#crmDetailPanel").classList.add("hidden");
+    if (loadCandidates !== false) await refreshCrmCandidates(false);
+    else {
+      renderCrmCategoryBar();
+      renderCrmCandidatesTable();
+    }
+    return;
+  }
+  if (state.crmView === "detail" && state.crmDetail) {
+    $("#crmNewPanel").classList.add("hidden");
+    $("#crmListPanel").classList.add("hidden");
+    $("#crmDetailPanel").classList.remove("hidden");
+    saveCrmRefineDrafts();
+    const skipTableRender = crmDetailInputsActive();
+    state.crmDetail = await api(`/api/campaigns/${state.crmDetail.id}`);
+    fillCrmPromptFields(state.crmDetail);
+    await refreshCrmAgentStatus();
+    renderCrmDetailMeta();
+    if (!skipTableRender) renderCrmCompaniesTable();
+    return;
+  }
+  $("#crmNewPanel").classList.add("hidden");
+  $("#crmListPanel").classList.remove("hidden");
+  $("#crmDetailPanel").classList.add("hidden");
+  const data = await api("/api/campaigns");
+  state.campaigns = data.campaigns || [];
+  renderCrmCampaignsTable();
+}
+
+function setCrmView(view) {
+  state.crmView = view;
+  if (view !== "detail") {
+    state.crmDetail = null;
+    state.crmLoadedCampaignId = null;
+  }
+  $$(".crm-view-tabs .view-tab").forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.crmView === view);
+  });
+  refreshCrmPage(view === "new");
+}
+
+function fillCrmPromptFields(c) {
+  if (state.crmLoadedCampaignId === c.id) return;
+  $("#crmDetailBasePrompt").value = c.base_prompt || "";
+  $("#crmDetailSystemPrompt").value = c.agent_system_prompt || "";
+  state.crmLoadedCampaignId = c.id;
+  updateCrmRunButton();
+}
+
+function saveCrmRefineDrafts() {
+  $$("#crmCompaniesTable textarea[data-refine]").forEach((ta) => {
+    const orgnr = ta.dataset.refine;
+    if (orgnr) state.crmRefineDrafts[orgnr] = ta.value;
+  });
+}
+
+function crmDetailInputsActive() {
+  const el = document.activeElement;
+  if (!el) return false;
+  if (el.id === "crmDetailBasePrompt" || el.id === "crmDetailSystemPrompt") return true;
+  return Boolean(el.matches?.("#crmCompaniesTable textarea[data-refine]"));
+}
+
+async function refreshCrmAgentStatus() {
+  try {
+    state.crmAgentStatus = await api("/api/campaigns/agent-status");
+  } catch {
+    state.crmAgentStatus = { ready: false, issues: ["Could not check agent status"] };
+  }
+  renderCrmAgentStatus();
+}
+
+function renderCrmAgentStatus() {
+  const el = $("#crmAgentStatus");
+  if (!el) return;
+  const s = state.crmAgentStatus;
+  if (!s) {
+    el.classList.add("hidden");
+    return;
+  }
+  el.classList.remove("hidden");
+  if (s.ready) {
+    el.className = "crm-agent-status ready";
+    el.innerHTML = `<strong>Composer agent ready</strong> — model <code>${esc(s.model || "composer-2")}</code>. Run uses Cursor SDK locally on this machine.`;
+  } else {
+    const issues = (s.issues || []).map((x) => esc(x)).join(" · ");
+    el.className = "crm-agent-status error";
+    el.innerHTML = `
+      <strong>Composer agent not configured</strong>
+      <p>1. Copy <code>.env.example</code> to <code>.env</code></p>
+      <p>2. Add <code>CURSOR_API_KEY</code> from <a href="https://cursor.com/dashboard/integrations" target="_blank" rel="noopener">cursor.com/dashboard/integrations</a></p>
+      <p>3. Restart the server, then click Run again</p>
+      <p class="muted">${issues}</p>
+    `;
+  }
+  updateCrmRunButton();
+}
+
+function updateCrmRunButton() {
+  const saved = (state.crmDetail?.base_prompt || "").trim();
+  const agentReady = state.crmAgentStatus?.ready !== false;
+  const btn = $("#crmRunBtn");
+  if (btn) btn.disabled = !saved || !agentReady;
+  const hint = $("#crmPromptHint");
+  if (!hint) return;
+  const draft = ($("#crmDetailBasePrompt")?.value || "").trim();
+  if (!agentReady && state.crmAgentStatus) {
+    hint.textContent = "Set CURSOR_API_KEY in .env and restart the server before running.";
+  } else if (saved) {
+    hint.textContent = "Prompt saved. You can run the campaign.";
+  } else if (draft) {
+    hint.textContent = "Click Save prompt before running.";
+  } else {
+    hint.textContent = "Write and save a site prompt before running.";
+  }
+}
+
+function renderCrmDetailMeta() {
+  const c = state.crmDetail;
+  if (!c) return;
+  const cat = c.filter_snapshot?.category;
+  const catLabel = cat
+    ? (state.filterOptions?.categories || []).find((x) => x.id === cat)?.label || cat
+    : "";
+  $("#crmDetailTitle").textContent = c.name;
+  $("#crmDetailMeta").textContent = [
+    crmStatusLabel(c.status),
+    `${c.companies.length} companies`,
+    catLabel,
+  ].filter(Boolean).join(" · ");
+  updateCrmRunButton();
+}
+
+function renderCrmCompaniesTable() {
+  const c = state.crmDetail;
+  if (!c) return;
+  saveCrmRefineDrafts();
+  const table = $("#crmCompaniesTable");
+  table.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Company</th>
+          <th>Org nr</th>
+          <th>Status</th>
+          <th>Version</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${c.companies.map((row) => {
+          const snap = row.company_snapshot || {};
+          const name = snap.company_name || row.orgnr;
+          const previewUrl = row.current_version
+            ? `/api/campaigns/${c.id}/companies/${encodeURIComponent(row.orgnr)}/site/index.html`
+            : "";
+          return `
+            <tr>
+              <td>${esc(name)}</td>
+              <td>${esc(row.orgnr)}</td>
+              <td><span class="crm-status ${esc(row.status)}">${esc(crmStatusLabel(row.status))}</span>
+                ${row.error ? `<div class="muted">${esc(row.error)}</div>` : ""}
+              </td>
+              <td>${row.current_version ? `v${row.current_version}` : "—"}</td>
+              <td>
+                ${previewUrl ? `<button type="button" class="ghost small" data-preview="${esc(previewUrl)}" data-preview-title="${esc(name)}">Preview</button>` : ""}
+                <button type="button" class="ghost small" data-events="${row.id}">History</button>
+                <div class="crm-refine-box">
+                  <textarea placeholder="Improve this site..." data-refine="${esc(row.orgnr)}">${esc(state.crmRefineDrafts[row.orgnr] || "")}</textarea>
+                  <button type="button" class="ghost small" data-refine-btn="${esc(row.orgnr)}">Improve</button>
+                </div>
+                <ul class="crm-events" id="crm-events-${row.id}"></ul>
+              </td>
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+  table.querySelectorAll("[data-preview]").forEach((btn) => {
+    btn.onclick = () => openSitePreview(btn.dataset.preview, btn.dataset.previewTitle);
+  });
+  table.querySelectorAll("[data-events]").forEach((btn) => {
+    btn.onclick = () => loadCrmEvents(btn.dataset.events);
+  });
+  table.querySelectorAll("[data-refine-btn]").forEach((btn) => {
+    btn.onclick = () => submitCrmRefine(btn.dataset.refineBtn);
+  });
+}
+
+function renderCrmCampaignsTable() {
+  const el = $("#crmCampaignsTable");
+  if (!state.campaigns.length) {
+    el.innerHTML = '<div class="empty" style="padding:24px">No campaigns yet.</div>';
+    return;
+  }
+  el.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Status</th>
+          <th>Companies</th>
+          <th>Generated</th>
+          <th>Pending</th>
+          <th>Errors</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${state.campaigns.map((c) => `
+          <tr>
+            <td>${esc(c.name)}</td>
+            <td><span class="crm-status ${esc(c.status)}">${esc(crmStatusLabel(c.status))}</span></td>
+            <td>${esc(c.company_count || 0)}</td>
+            <td>${esc(c.generated_count || 0)}</td>
+            <td>${esc(c.pending_count || 0)}</td>
+            <td>${esc(c.error_count || 0)}</td>
+            <td><button type="button" class="ghost small" data-open-campaign="${c.id}">Open</button></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  el.querySelectorAll("[data-open-campaign]").forEach((btn) => {
+    btn.onclick = async () => {
+      state.crmLoadedCampaignId = null;
+      state.crmDetail = await api(`/api/campaigns/${btn.dataset.openCampaign}`);
+      state.crmView = "detail";
+      await refreshCrmPage(false);
+    };
+  });
+}
+
+async function loadCrmEvents(companyRowId) {
+  const c = state.crmDetail;
+  if (!c) return;
+  const row = c.companies.find((x) => String(x.id) === String(companyRowId));
+  if (!row) return;
+  const data = await api(`/api/campaigns/${c.id}/companies/${encodeURIComponent(row.orgnr)}/events`);
+  const el = $(`#crm-events-${companyRowId}`);
+  if (!el) return;
+  el.innerHTML = (data.events || []).map((ev) => {
+    const when = ev.created_at ? new Date(ev.created_at * 1000).toLocaleString() : "";
+    return `<li><strong>${esc(ev.type)}</strong> ${esc(ev.message || "")} <span class="muted">${esc(when)}</span></li>`;
+  }).join("") || "<li>No events yet.</li>";
+}
+
+async function submitCrmRefine(orgnr) {
+  const c = state.crmDetail;
+  if (!c) return;
+  const textarea = document.querySelector(`textarea[data-refine="${CSS.escape(orgnr)}"]`);
+  const prompt = textarea?.value.trim();
+  if (!prompt) {
+    alert("Enter an improvement prompt first.");
+    return;
+  }
+  try {
+    await api(`/api/campaigns/${c.id}/companies/${encodeURIComponent(orgnr)}/refine`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
+    delete state.crmRefineDrafts[orgnr];
+    if (textarea) textarea.value = "";
+    state.crmDetail = await api(`/api/campaigns/${c.id}`);
+    renderCrmCompaniesTable();
+  } catch (err) {
+    alert("Improve request failed: " + err.message);
+  }
+}
+
+async function createCrmCampaign() {
+  const orgnrs = [...state.crmSelectedOrgnrs];
+  if (!orgnrs.length) {
+    alert("Select at least one company.");
+    return;
+  }
+  const catLabel = state.crmCategory
+    ? (state.filterOptions?.categories || []).find((c) => c.id === state.crmCategory)?.label
+    : "All";
+  const name = $("#crmCampaignName").value.trim() || catLabel || "New campaign";
+  try {
+    const campaign = await api("/api/campaigns", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, category: state.crmCategory || null, orgnrs }),
+    });
+    state.crmLoadedCampaignId = null;
+    state.crmDetail = campaign;
+    state.crmView = "detail";
+    state.crmSelectedOrgnrs.clear();
+    await refreshCrmPage(false);
+  } catch (err) {
+    alert("Create campaign failed: " + err.message);
+  }
+}
+
+async function saveCrmPrompt() {
+  const c = state.crmDetail;
+  if (!c) return;
+  const base_prompt = $("#crmDetailBasePrompt").value.trim();
+  if (!base_prompt) {
+    alert("Write a site prompt first.");
+    return;
+  }
+  try {
+    state.crmDetail = await api(`/api/campaigns/${c.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        base_prompt,
+        agent_system_prompt: $("#crmDetailSystemPrompt").value.trim() || null,
+      }),
+    });
+    state.crmLoadedCampaignId = c.id;
+    fillCrmPromptFields(state.crmDetail);
+    renderCrmDetailMeta();
+    alert("Prompt saved.");
+  } catch (err) {
+    alert("Save failed: " + err.message);
+  }
+}
+
+async function runCrmCampaign() {
+  const c = state.crmDetail;
+  if (!c) return;
+  try {
+    const res = await api(`/api/campaigns/${c.id}/run`, { method: "POST" });
+    alert(`Queued ${res.queued} companies for generation.`);
+    state.crmDetail = res.campaign;
+    renderCrmDetailMeta();
+    renderCrmCompaniesTable();
+  } catch (err) {
+    alert("Run failed: " + err.message);
+  }
+}
+
+function openSitePreview(url, title) {
+  $("#sitePreviewTitle").textContent = title || "Site preview";
+  $("#sitePreviewFrame").src = url;
+  $("#sitePreviewOverlay").classList.remove("hidden");
+  $("#sitePreviewOverlay").setAttribute("aria-hidden", "false");
+}
+
+function closeSitePreview() {
+  $("#sitePreviewOverlay").classList.add("hidden");
+  $("#sitePreviewOverlay").setAttribute("aria-hidden", "true");
+  $("#sitePreviewFrame").src = "about:blank";
 }
 
 function schedulePeopleRefresh() {
@@ -1006,7 +1691,70 @@ function schedulePeopleRefresh() {
 
 $("#peopleTab").onclick = () => switchPage("people");
 $("#commandTab").onclick = () => switchPage("command");
-$$(".view-tab").forEach((tab) => {
+$("#crmTab").onclick = () => switchPage("crm");
+$$(".crm-view-tabs .view-tab").forEach((tab) => {
+  tab.onclick = () => setCrmView(tab.dataset.crmView);
+});
+$("#crmCreateBtn").onclick = () => createCrmCampaign();
+$("#crmSelectAll").onchange = (e) => {
+  const checked = e.target.checked;
+  for (const c of state.crmCandidates.companies || []) {
+    if (checked) state.crmSelectedOrgnrs.add(c.orgnr);
+    else state.crmSelectedOrgnrs.delete(c.orgnr);
+  }
+  renderCrmCandidatesTable();
+};
+$("#crmFilterToggle").onclick = () => $("#crmFilterPanel").classList.toggle("hidden");
+$("#crmClearFiltersBtn").onclick = clearCrmFilters;
+$("#crmTextFilter").addEventListener("input", scheduleCrmRefresh);
+$("#crmTextFilter").addEventListener("change", scheduleCrmRefresh);
+$$("#crmFilterPanel .filter-grid input, #crmFilterPanel .filter-grid select, #crmFilterPanel .quick-filters input").forEach((el) => {
+  el.addEventListener("input", scheduleCrmRefresh);
+  el.addEventListener("change", scheduleCrmRefresh);
+});
+$$("th[data-crm-sort]").forEach((th) => {
+  th.onclick = () => {
+    const key = th.dataset.crmSort;
+    if (state.crmSortKey === key) state.crmSortDir = state.crmSortDir === "asc" ? "desc" : "asc";
+    else {
+      state.crmSortKey = key;
+      state.crmSortDir = key === "company_name" ? "asc" : "desc";
+    }
+    refreshCrmCandidates(false).catch(console.warn);
+  };
+});
+$("#crmFirstPageBtn").onclick = () => { state.crmOffset = 0; refreshCrmCandidates(false).catch(console.warn); };
+$("#crmPrevPageBtn").onclick = () => {
+  state.crmOffset = Math.max(0, state.crmOffset - state.crmLimit);
+  refreshCrmCandidates(false).catch(console.warn);
+};
+$("#crmNextPageBtn").onclick = () => {
+  if (state.crmOffset + state.crmLimit < state.crmTotal) {
+    state.crmOffset += state.crmLimit;
+    refreshCrmCandidates(false).catch(console.warn);
+  }
+};
+$("#crmLastPageBtn").onclick = () => {
+  state.crmOffset = Math.max(0, (Math.ceil(state.crmTotal / state.crmLimit) - 1) * state.crmLimit);
+  refreshCrmCandidates(false).catch(console.warn);
+};
+$("#crmPageSize").onchange = () => {
+  state.crmLimit = Number($("#crmPageSize").value) || 50;
+  refreshCrmCandidates(true).catch(console.warn);
+};
+$("#crmBackBtn").onclick = () => setCrmView("list");
+$("#crmRunBtn").onclick = () => runCrmCampaign();
+$("#crmSavePromptBtn").onclick = () => saveCrmPrompt();
+$("#crmDetailBasePrompt").addEventListener("input", updateCrmRunButton);
+$("#crmCompaniesTable").addEventListener("input", (e) => {
+  const ta = e.target.closest("textarea[data-refine]");
+  if (ta?.dataset.refine) state.crmRefineDrafts[ta.dataset.refine] = ta.value;
+});
+$("#sitePreviewClose").onclick = closeSitePreview;
+$("#sitePreviewOverlay").onclick = (e) => {
+  if (e.target === $("#sitePreviewOverlay")) closeSitePreview();
+};
+$$(".people-view-tabs .view-tab").forEach((tab) => {
   tab.onclick = () => setPeopleView(tab.dataset.view);
 });
 $("#autoSpamBtn").onclick = async () => {
