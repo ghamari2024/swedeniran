@@ -23,6 +23,14 @@ const state = {
   crmDetail: null,
   crmRefineDrafts: {},
   crmAgentStatus: null,
+  crmEmailStatus: null,
+  crmEmailSimulation: null,
+  crmDetailTab: "site",
+  crmEmailMessages: [],
+  crmEmailCounts: null,
+  crmEmailRate: null,
+  crmEmailRefineDrafts: {},
+  emailCompose: null,
   crmCandidates: { total: 0, companies: [] },
   crmCategory: "",
   crmSelectedOrgnrs: new Set(),
@@ -1350,8 +1358,15 @@ async function refreshCrmPage(loadCandidates) {
     state.crmDetail = await api(`/api/campaigns/${state.crmDetail.id}`);
     fillCrmPromptFields(state.crmDetail);
     await refreshCrmAgentStatus();
+    await refreshCrmEmailStatus();
+    await refreshCrmSimulation();
+    await refreshCrmEmailData(false);
     renderCrmDetailMeta();
-    if (!skipTableRender) renderCrmCompaniesTable();
+    renderCrmDetailTabPanels();
+    if (!skipTableRender) {
+      if (state.crmDetailTab === "email") renderCrmEmailMessagesTable();
+      else renderCrmCompaniesTable();
+    }
     return;
   }
   $("#crmNewPanel").classList.add("hidden");
@@ -1374,10 +1389,33 @@ function setCrmView(view) {
   refreshCrmPage(view === "new");
 }
 
+function setCrmDetailTab(tab) {
+  state.crmDetailTab = tab;
+  $$(".crm-detail-tabs .view-tab").forEach((el) => {
+    el.classList.toggle("active", el.dataset.crmDetailTab === tab);
+  });
+  renderCrmDetailTabPanels();
+  if (tab === "email") {
+    refreshCrmEmailData(true).then(() => renderCrmEmailMessagesTable());
+  } else {
+    renderCrmCompaniesTable();
+  }
+}
+
+function renderCrmDetailTabPanels() {
+  const site = state.crmDetailTab !== "email";
+  $("#crmSitePanel")?.classList.toggle("hidden", !site);
+  $("#crmEmailPanel")?.classList.toggle("hidden", site);
+  const runBtn = $("#crmRunBtn");
+  if (runBtn) runBtn.classList.toggle("hidden", !site);
+}
+
 function fillCrmPromptFields(c) {
   if (state.crmLoadedCampaignId === c.id) return;
   $("#crmDetailBasePrompt").value = c.base_prompt || "";
   $("#crmDetailSystemPrompt").value = c.agent_system_prompt || "";
+  $("#crmDetailEmailPrompt").value = c.email_prompt || "";
+  $("#crmDetailEmailSystemPrompt").value = c.email_system_prompt || "";
   state.crmLoadedCampaignId = c.id;
   updateCrmRunButton();
 }
@@ -1393,7 +1431,11 @@ function crmDetailInputsActive() {
   const el = document.activeElement;
   if (!el) return false;
   if (el.id === "crmDetailBasePrompt" || el.id === "crmDetailSystemPrompt") return true;
-  return Boolean(el.matches?.("#crmCompaniesTable textarea[data-refine]"));
+  if (el.id === "crmDetailEmailPrompt" || el.id === "crmDetailEmailSystemPrompt") return true;
+  return Boolean(
+    el.matches?.("#crmCompaniesTable textarea[data-refine]")
+    || el.matches?.("#crmEmailMessagesTable textarea[data-email-refine]")
+  );
 }
 
 async function refreshCrmAgentStatus() {
@@ -1429,6 +1471,332 @@ function renderCrmAgentStatus() {
     `;
   }
   updateCrmRunButton();
+}
+
+async function refreshCrmEmailStatus() {
+  try {
+    state.crmEmailStatus = await api("/api/campaigns/email-status?verify=1");
+  } catch {
+    state.crmEmailStatus = { ready: false, issues: ["Could not check email status"] };
+  }
+  renderCrmEmailStatus();
+}
+
+async function refreshCrmSimulation() {
+  try {
+    state.crmEmailSimulation = await api("/api/campaigns/email/simulation");
+  } catch {
+    state.crmEmailSimulation = { enabled: true, to: "ghamari2004@gmail.com", ready: true };
+  }
+  renderCrmSimulationToggle();
+}
+
+function renderCrmSimulationToggle() {
+  const btn = $("#crmSimulationToggle");
+  const sim = state.crmEmailSimulation;
+  const on = Boolean(sim?.enabled);
+  const reviewTo = sim?.to || "ghamari2004@gmail.com";
+  if (btn) {
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+    btn.textContent = on ? "Simulation ON" : "Simulation OFF";
+    btn.title = on
+      ? `Simulation is ON — emails go to ${reviewTo}. Click to send to real company addresses.`
+      : "Simulation is OFF — emails go to each company's real address. Click to turn simulation on.";
+    btn.setAttribute("aria-label", on ? "Simulation on" : "Simulation off");
+  }
+  renderCrmEmailSimulation();
+}
+
+async function toggleCrmSimulation() {
+  const sim = state.crmEmailSimulation || { enabled: true };
+  try {
+    state.crmEmailSimulation = await api("/api/campaigns/email/simulation", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: !sim.enabled }),
+    });
+    renderCrmSimulationToggle();
+    if (state.crmView === "detail" && state.crmDetailTab === "email") {
+      await refreshCrmEmailData(true);
+    }
+  } catch (err) {
+    alert("Could not update simulation mode: " + err.message);
+  }
+}
+
+function renderCrmEmailSimulation() {
+  const sim = state.crmEmailSimulation || state.crmEmailStatus?.simulation;
+  const enabled = Boolean(sim?.enabled && sim?.to);
+  const tabBadge = $("#crmEmailTabSimBadge");
+  const banner = $("#crmEmailSimulationBanner");
+  const toEl = $("#crmEmailSimulationTo");
+  if (tabBadge) tabBadge.classList.toggle("hidden", !enabled);
+  if (banner) banner.classList.toggle("hidden", !enabled);
+  if (toEl && enabled) toEl.textContent = sim.to;
+}
+
+function renderCrmEmailStatus() {
+  const el = $("#crmEmailSmtpStatus");
+  if (!el) return;
+  const s = state.crmEmailStatus;
+  if (!s) {
+    el.classList.add("hidden");
+    return;
+  }
+  el.classList.remove("hidden");
+  const sim = s.simulation;
+  const simNote = sim?.enabled && sim?.to
+    ? ` · <span class="crm-sim-badge">Simulation</span> → ${esc(sim.to)}`
+    : "";
+  if (s.ready) {
+    el.className = "crm-agent-status ready";
+    const verified = s.verified ? "Connected" : "Configured";
+    const rate = s.rate || {};
+    el.innerHTML = `<strong>Email ${verified}</strong> — <code>${esc(s.from || "")}</code> · daily ${esc(String(rate.sent_today || 0))}/${esc(String(rate.daily_limit || 40))} sent · min interval ${esc(String(rate.min_interval_seconds || 90))}s${simNote}`;
+  } else {
+    const issues = (s.issues || []).map((x) => esc(x)).join(" · ");
+    el.className = "crm-agent-status error";
+    el.innerHTML = `<strong>Email not connected</strong><p class="muted">${issues}</p>${simNote}`;
+  }
+  renderCrmEmailSimulation();
+}
+
+async function refreshCrmEmailData(renderTable) {
+  const c = state.crmDetail;
+  if (!c) return;
+  try {
+    const data = await api(`/api/campaigns/${c.id}/email/messages`);
+    state.crmEmailMessages = data.messages || [];
+    state.crmEmailCounts = data.counts || {};
+    state.crmEmailRate = data.rate || {};
+    state.crmEmailSimulation = data.simulation || null;
+    renderCrmEmailQueueStats();
+    renderCrmEmailSimulation();
+    if (renderTable !== false) renderCrmEmailMessagesTable();
+  } catch {
+    state.crmEmailMessages = [];
+  }
+}
+
+function renderCrmEmailQueueStats() {
+  const el = $("#crmEmailQueueStats");
+  if (!el) return;
+  const counts = state.crmEmailCounts || {};
+  const rate = state.crmEmailRate || {};
+  el.innerHTML = [
+    `Sent: ${counts.sent || 0}`,
+    `Queued: ${counts.queued || 0}`,
+    `Draft ready: ${counts.draft_ready || 0}`,
+    `Generating: ${counts.draft_pending || 0}`,
+    `Failed: ${counts.failed || 0}`,
+    `Replied: ${counts.replied || 0}`,
+    `Selected: ${counts.selected || 0}`,
+    rate.can_send ? "Rate: OK" : `Rate: wait ${rate.wait_seconds || 0}s`,
+  ].join(" · ");
+}
+
+function emailStatusLabel(status) {
+  const map = {
+    idle: "Idle",
+    draft_pending: "Generating",
+    draft_generating: "Generating",
+    draft_ready: "Draft ready",
+    draft_error: "Draft error",
+    queued: "Queued",
+    sending: "Sending",
+    sent: "Sent",
+    failed: "Failed",
+    bounced: "Bounced",
+    replied: "Replied",
+    excluded: "Excluded",
+  };
+  return map[status] || status;
+}
+
+function renderCrmEmailMessagesTable() {
+  const c = state.crmDetail;
+  if (!c) return;
+  $$("#crmEmailMessagesTable textarea[data-email-refine]").forEach((ta) => {
+    if (ta.dataset.orgnr) state.crmEmailRefineDrafts[ta.dataset.orgnr] = ta.value;
+  });
+  const table = $("#crmEmailMessagesTable");
+  const msgs = state.crmEmailMessages || [];
+  if (!msgs.length) {
+    table.innerHTML = '<div class="empty" style="padding:24px">No companies with generated sites yet. Run the website campaign first.</div>';
+    return;
+  }
+  table.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th><input id="crmEmailSelectAll" type="checkbox" title="Select all"></th>
+          <th>Company</th>
+          <th>Recipient</th>
+          <th>Subject</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${msgs.map((row) => {
+          const dupClass = row.already_emailed ? "crm-email-row-dup" : "";
+          const dupBadge = row.already_emailed ? '<span class="crm-dup-badge">Previously emailed</span>' : "";
+          const canPreview = row.status === "draft_ready" || row.body_html;
+          const simActive = Boolean(row.simulation?.enabled);
+          const simTo = row.display_recipient || row.simulation?.to || "";
+          const recipientCell = simActive
+            ? `<span class="crm-recipient-sim">${esc(simTo || "review inbox")}</span><span class="crm-recipient-original muted">DB: ${esc(row.original_recipient || row.recipient_email || "—")}</span>`
+            : esc(row.recipient_email || "—");
+          const canSelect = row.status !== "sent";
+          return `
+            <tr class="${dupClass}">
+              <td><input type="checkbox" data-email-select="${esc(row.orgnr)}" ${row.selected ? "checked" : ""} ${canSelect ? "" : "disabled"}></td>
+              <td>${esc(row.company_name || row.orgnr)} ${dupBadge}</td>
+              <td>${recipientCell}</td>
+              <td>${esc(row.subject || "—")}</td>
+              <td><span class="crm-status ${esc(row.status)}">${esc(emailStatusLabel(row.status))}</span>
+                ${row.error ? `<div class="muted">${esc(row.error)}</div>` : ""}
+              </td>
+              <td>
+                ${canPreview ? `<button type="button" class="ghost small" data-email-preview="${esc(row.orgnr)}">Preview</button>` : ""}
+                <div class="crm-refine-box">
+                  <textarea placeholder="Improve this email..." data-email-refine="${esc(row.orgnr)}">${esc(state.crmEmailRefineDrafts[row.orgnr] || "")}</textarea>
+                  <button type="button" class="ghost small" data-email-refine-btn="${esc(row.orgnr)}">Improve</button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+  const selectAll = $("#crmEmailSelectAll");
+  if (selectAll) {
+    const selectable = msgs.filter((m) => m.status !== "sent");
+    selectAll.checked = selectable.length > 0 && selectable.every((m) => m.selected);
+    selectAll.onchange = async (e) => {
+      await api(`/api/campaigns/${c.id}/email/select-bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selected: e.target.checked }),
+      });
+      await refreshCrmEmailData(true);
+    };
+  }
+  table.querySelectorAll("[data-email-select]").forEach((cb) => {
+    cb.onchange = async () => {
+      await api(`/api/campaigns/${c.id}/companies/${encodeURIComponent(cb.dataset.emailSelect)}/email/select`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selected: cb.checked }),
+      });
+      await refreshCrmEmailData(true);
+    };
+  });
+  table.querySelectorAll("[data-email-preview]").forEach((btn) => {
+    btn.onclick = () => openEmailPreview(c.id, btn.dataset.emailPreview);
+  });
+  table.querySelectorAll("[data-email-refine-btn]").forEach((btn) => {
+    btn.onclick = () => submitEmailRefine(btn.dataset.emailRefineBtn);
+  });
+}
+
+async function saveCrmEmailPrompt() {
+  const c = state.crmDetail;
+  if (!c) return;
+  const email_prompt = $("#crmDetailEmailPrompt").value.trim();
+  if (!email_prompt) {
+    alert("Write an email prompt first.");
+    return;
+  }
+  try {
+    state.crmDetail = await api(`/api/campaigns/${c.id}/email-prompt`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email_prompt,
+        email_system_prompt: $("#crmDetailEmailSystemPrompt").value.trim() || null,
+      }),
+    });
+    alert("Email prompt saved.");
+  } catch (err) {
+    alert("Save failed: " + err.message);
+  }
+}
+
+async function generateCrmEmailDrafts() {
+  const c = state.crmDetail;
+  if (!c) return;
+  const prompt = ($("#crmDetailEmailPrompt").value || c.email_prompt || "").trim();
+  if (!prompt) {
+    alert("Save an email prompt first.");
+    return;
+  }
+  if (prompt !== (c.email_prompt || "").trim()) {
+    await saveCrmEmailPrompt();
+  }
+  try {
+    const res = await api(`/api/campaigns/${c.id}/email/generate-drafts`, { method: "POST" });
+    alert(`Queued ${res.queued} email drafts for generation.`);
+    await refreshCrmEmailData(true);
+  } catch (err) {
+    alert("Generate failed: " + err.message);
+  }
+}
+
+async function sendCrmEmailQueue() {
+  const c = state.crmDetail;
+  if (!c) return;
+  const sim = state.crmEmailSimulation;
+  const simMsg = sim?.enabled && sim?.to
+    ? `\n\nSimulation mode: all emails go to ${sim.to} (company addresses unchanged).`
+    : "";
+  if (!confirm(`Start sending selected emails with rate limiting?${simMsg}`)) return;
+  try {
+    const res = await api(`/api/campaigns/${c.id}/email/send`, { method: "POST" });
+    alert(`Queued ${res.queued} emails for sending.`);
+    await refreshCrmEmailData(true);
+  } catch (err) {
+    alert("Send queue failed: " + err.message);
+  }
+}
+
+function openEmailPreview(campaignId, orgnr) {
+  const url = `/api/campaigns/${campaignId}/companies/${encodeURIComponent(orgnr)}/email/preview`;
+  $("#emailPreviewTitle").textContent = `Email — ${orgnr}`;
+  $("#emailPreviewFrame").src = url;
+  $("#emailPreviewOverlay").classList.remove("hidden");
+  $("#emailPreviewOverlay").setAttribute("aria-hidden", "false");
+}
+
+function closeEmailPreview() {
+  $("#emailPreviewOverlay").classList.add("hidden");
+  $("#emailPreviewOverlay").setAttribute("aria-hidden", "true");
+  $("#emailPreviewFrame").src = "about:blank";
+}
+
+async function submitEmailRefine(orgnr) {
+  const c = state.crmDetail;
+  if (!c) return;
+  const textarea = document.querySelector(`textarea[data-email-refine="${CSS.escape(orgnr)}"]`);
+  const prompt = textarea?.value.trim();
+  if (!prompt) {
+    alert("Enter an improvement prompt first.");
+    return;
+  }
+  try {
+    await api(`/api/campaigns/${c.id}/companies/${encodeURIComponent(orgnr)}/email/refine`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
+    delete state.crmEmailRefineDrafts[orgnr];
+    if (textarea) textarea.value = "";
+    await refreshCrmEmailData(true);
+  } catch (err) {
+    alert("Improve failed: " + err.message);
+  }
 }
 
 function updateCrmRunButton() {
@@ -1684,6 +2052,76 @@ function closeSitePreview() {
   $("#sitePreviewFrame").src = "about:blank";
 }
 
+function defaultEmailBody(companyName, previewUrl) {
+  const origin = window.location.origin;
+  const link = previewUrl ? `${origin}${previewUrl}` : "";
+  const lines = [
+    `Hej ${companyName || ""},`.trim(),
+    "",
+    "Jag hoppas att det här meddelandet når er väl.",
+  ];
+  if (link) {
+    lines.push("", "Jag har tagit fram ett förslag på en uppdaterad webbplats för er:", link);
+  }
+  lines.push("", "Med vänliga hälsningar,", state.crmEmailStatus?.from || "Mechamey");
+  return lines.join("\n");
+}
+
+function openEmailCompose(orgnr, companyName, toEmail) {
+  const c = state.crmDetail;
+  if (!c) return;
+  const row = c.companies.find((x) => x.orgnr === orgnr);
+  const previewUrl = row?.current_version
+    ? `/api/campaigns/${c.id}/companies/${encodeURIComponent(orgnr)}/site/index.html`
+    : "";
+  state.emailCompose = { orgnr, companyName, previewUrl };
+  $("#emailComposeTitle").textContent = `Email — ${companyName || orgnr}`;
+  $("#emailComposeTo").value = toEmail || "";
+  $("#emailComposeSubject").value = `Förslag på webbplats — ${companyName || orgnr}`;
+  $("#emailComposeBody").value = defaultEmailBody(companyName, previewUrl);
+  $("#emailComposeHint").textContent = "";
+  $("#emailComposeOverlay").classList.remove("hidden");
+  $("#emailComposeOverlay").setAttribute("aria-hidden", "false");
+}
+
+function closeEmailCompose() {
+  state.emailCompose = null;
+  $("#emailComposeOverlay").classList.add("hidden");
+  $("#emailComposeOverlay").setAttribute("aria-hidden", "true");
+  $("#emailComposeHint").textContent = "";
+}
+
+async function sendCampaignEmail() {
+  const c = state.crmDetail;
+  const ctx = state.emailCompose;
+  if (!c || !ctx) return;
+  const to = $("#emailComposeTo").value.trim();
+  const subject = $("#emailComposeSubject").value.trim();
+  const body = $("#emailComposeBody").value.trim();
+  if (!to || !subject || !body) {
+    $("#emailComposeHint").textContent = "Fill in To, Subject, and Message.";
+    return;
+  }
+  const btn = $("#emailComposeSend");
+  btn.disabled = true;
+  $("#emailComposeHint").textContent = "Sending…";
+  try {
+    await api(`/api/campaigns/${c.id}/companies/${encodeURIComponent(ctx.orgnr)}/email`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to, subject, body }),
+    });
+    const rowId = c.companies.find((x) => x.orgnr === ctx.orgnr)?.id;
+    closeEmailCompose();
+    alert(`Email sent to ${to}`);
+    if (rowId) await loadCrmEvents(rowId);
+  } catch (err) {
+    $("#emailComposeHint").textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function schedulePeopleRefresh() {
   window.clearTimeout(peopleRefreshTimer);
   peopleRefreshTimer = window.setTimeout(() => refreshPeopleData(true), 250);
@@ -1743,8 +2181,14 @@ $("#crmPageSize").onchange = () => {
   refreshCrmCandidates(true).catch(console.warn);
 };
 $("#crmBackBtn").onclick = () => setCrmView("list");
+$("#crmSimulationToggle").onclick = () => toggleCrmSimulation();
 $("#crmRunBtn").onclick = () => runCrmCampaign();
 $("#crmSavePromptBtn").onclick = () => saveCrmPrompt();
+$("#crmDetailTabSite").onclick = () => setCrmDetailTab("site");
+$("#crmDetailTabEmail").onclick = () => setCrmDetailTab("email");
+$("#crmSaveEmailPromptBtn").onclick = () => saveCrmEmailPrompt();
+$("#crmGenerateEmailDraftsBtn").onclick = () => generateCrmEmailDrafts();
+$("#crmSendEmailQueueBtn").onclick = () => sendCrmEmailQueue();
 $("#crmDetailBasePrompt").addEventListener("input", updateCrmRunButton);
 $("#crmCompaniesTable").addEventListener("input", (e) => {
   const ta = e.target.closest("textarea[data-refine]");
@@ -1754,6 +2198,16 @@ $("#sitePreviewClose").onclick = closeSitePreview;
 $("#sitePreviewOverlay").onclick = (e) => {
   if (e.target === $("#sitePreviewOverlay")) closeSitePreview();
 };
+$("#emailPreviewClose").onclick = closeEmailPreview;
+$("#emailPreviewOverlay").onclick = (e) => {
+  if (e.target === $("#emailPreviewOverlay")) closeEmailPreview();
+};
+$("#emailComposeClose").onclick = closeEmailCompose;
+$("#emailComposeSend").onclick = () => sendCampaignEmail();
+$("#emailComposeOverlay").onclick = (e) => {
+  if (e.target === $("#emailComposeOverlay")) closeEmailCompose();
+};
+document.querySelector(".email-compose-card")?.addEventListener("click", (e) => e.stopPropagation());
 $$(".people-view-tabs .view-tab").forEach((tab) => {
   tab.onclick = () => setPeopleView(tab.dataset.view);
 });

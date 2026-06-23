@@ -321,24 +321,85 @@
             <p id="crmDetailMeta" class="muted"></p>
           </div>
           <div class="command-actions">
+            <button id="crmSimulationToggle" class="crm-sim-toggle active" type="button" aria-pressed="true" aria-label="Simulation on" title="Simulation is ON — click to switch">
+              Simulation ON
+            </button>
             <button id="crmRunBtn" class="primary" type="button">Run campaign</button>
           </div>
         </div>
-        <div class="card crm-prompt-box">
-          <div id="crmAgentStatus" class="crm-agent-status hidden"></div>
-          <div class="eyebrow">Step 2 — Site prompt</div>
-          <label>Shared prompt (used for every company in this campaign)
-            <textarea id="crmDetailBasePrompt" rows="8" placeholder="Describe the responsive website you want built..."></textarea>
-          </label>
-          <label>Optional system prompt
-            <textarea id="crmDetailSystemPrompt" rows="3" placeholder="Extra style or brand rules for the agent"></textarea>
-          </label>
-          <button id="crmSavePromptBtn" class="ghost" type="button">Save prompt</button>
-          <span id="crmPromptHint" class="muted">Save the prompt before running the campaign.</span>
+        <div class="crm-detail-tabs">
+          <button id="crmDetailTabSite" class="view-tab active" type="button" data-crm-detail-tab="site">Website</button>
+          <button id="crmDetailTabEmail" class="view-tab" type="button" data-crm-detail-tab="email">Email <span id="crmEmailTabSimBadge" class="crm-sim-badge hidden">Simulation</span></button>
         </div>
-        <div id="crmCompaniesTable" class="card table-wrap"></div>
+        <div id="crmSitePanel">
+          <div class="card crm-prompt-box">
+            <div id="crmAgentStatus" class="crm-agent-status hidden"></div>
+            <div class="eyebrow">Step 2 — Site prompt</div>
+            <label>Shared prompt (used for every company in this campaign)
+              <textarea id="crmDetailBasePrompt" rows="8" placeholder="Describe the responsive website you want built..."></textarea>
+            </label>
+            <label>Optional system prompt
+              <textarea id="crmDetailSystemPrompt" rows="3" placeholder="Extra style or brand rules for the agent"></textarea>
+            </label>
+            <button id="crmSavePromptBtn" class="ghost" type="button">Save prompt</button>
+            <span id="crmPromptHint" class="muted">Save the prompt before running the campaign.</span>
+          </div>
+          <div id="crmCompaniesTable" class="card table-wrap"></div>
+        </div>
+        <div id="crmEmailPanel" class="hidden">
+          <div id="crmEmailSimulationBanner" class="crm-sim-banner hidden" role="status">
+            <span class="crm-sim-badge">Simulation</span>
+            <span>All emails are sent to <strong id="crmEmailSimulationTo"></strong> for review. Company addresses in the database are unchanged.</span>
+          </div>
+          <div class="card crm-prompt-box">
+            <div id="crmEmailSmtpStatus" class="crm-agent-status hidden"></div>
+            <div id="crmEmailQueueStats" class="crm-email-stats muted"></div>
+            <div class="eyebrow">Email outreach prompt</div>
+            <label>Shared email prompt (personalized per company by AI)
+              <textarea id="crmDetailEmailPrompt" rows="6" placeholder="Describe the outreach tone, offer, and CTA..."></textarea>
+            </label>
+            <label>Optional system prompt
+              <textarea id="crmDetailEmailSystemPrompt" rows="2" placeholder="Extra rules for email copy"></textarea>
+            </label>
+            <div class="crm-email-toolbar">
+              <button id="crmSaveEmailPromptBtn" class="ghost" type="button">Save email prompt</button>
+              <button id="crmGenerateEmailDraftsBtn" class="ghost" type="button">Generate drafts</button>
+              <button id="crmSendEmailQueueBtn" class="primary" type="button">Send selected</button>
+            </div>
+            <span id="crmEmailPromptHint" class="muted">Generate drafts to preview personalized emails before sending.</span>
+          </div>
+          <div id="crmEmailMessagesTable" class="card table-wrap"></div>
+        </div>
       </div>
     </section>
+  </div>
+
+  <div id="emailPreviewOverlay" class="person-modal-overlay hidden" aria-hidden="true">
+    <div class="person-modal-card site-preview-card" role="dialog" aria-modal="true">
+      <div class="person-modal-header">
+        <div id="emailPreviewTitle">Email preview</div>
+        <button type="button" id="emailPreviewClose" class="person-modal-close" aria-label="Close">&times;</button>
+      </div>
+      <iframe id="emailPreviewFrame" class="site-preview-frame" title="Email preview"></iframe>
+    </div>
+  </div>
+
+  <div id="emailComposeOverlay" class="person-modal-overlay hidden" aria-hidden="true">
+    <div class="person-modal-card email-compose-card" role="dialog" aria-modal="true">
+      <div class="person-modal-header">
+        <div id="emailComposeTitle">Send email</div>
+        <button type="button" id="emailComposeClose" class="person-modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="email-compose-body">
+        <label>To<input id="emailComposeTo" type="email" autocomplete="off"></label>
+        <label>Subject<input id="emailComposeSubject" type="text" autocomplete="off"></label>
+        <label>Message<textarea id="emailComposeBody" rows="10"></textarea></label>
+        <div class="email-compose-actions">
+          <button id="emailComposeSend" class="primary" type="button">Send</button>
+          <span id="emailComposeHint" class="muted"></span>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div id="sitePreviewOverlay" class="person-modal-overlay hidden" aria-hidden="true">

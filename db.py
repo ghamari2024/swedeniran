@@ -22,6 +22,7 @@ from translations import (
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "swedeniran.db")
 CAMPAIGNS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "campaigns")
+STALE_CAMPAIGN_JOB_SECONDS = int(os.environ.get("SWEDENIRAN_CAMPAIGN_STALE_SECONDS", "900"))
 
 
 @contextmanager
@@ -201,7 +202,86 @@ def init_db() -> None:
                 created_at INTEGER NOT NULL,
                 FOREIGN KEY (campaign_company_id) REFERENCES campaign_companies(id)
             );
+
+            CREATE TABLE IF NOT EXISTS campaign_email_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_id INTEGER NOT NULL,
+                orgnr TEXT NOT NULL,
+                campaign_company_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'idle',
+                subject TEXT,
+                body_html TEXT,
+                body_text TEXT,
+                draft_json TEXT,
+                agent_id TEXT,
+                refine_prompt TEXT,
+                selected INTEGER NOT NULL DEFAULT 1,
+                recipient_email TEXT,
+                message_id TEXT,
+                error TEXT,
+                provider_response TEXT,
+                queued_at INTEGER,
+                sent_at INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                UNIQUE(campaign_id, orgnr),
+                FOREIGN KEY (campaign_id) REFERENCES campaigns(id),
+                FOREIGN KEY (campaign_company_id) REFERENCES campaign_companies(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_campaign_email_messages_status
+                ON campaign_email_messages(status);
+            CREATE INDEX IF NOT EXISTS idx_campaign_email_messages_campaign
+                ON campaign_email_messages(campaign_id);
+
+            CREATE TABLE IF NOT EXISTS email_ledger (
+                orgnr TEXT PRIMARY KEY,
+                recipient_email TEXT,
+                first_campaign_id INTEGER,
+                last_campaign_id INTEGER,
+                send_count INTEGER NOT NULL DEFAULT 0,
+                last_sent_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS email_suppression (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL,
+                orgnr TEXT,
+                reason TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                UNIQUE(email, reason)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_email_suppression_email
+                ON email_suppression(email);
+
+            CREATE TABLE IF NOT EXISTS email_replies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT,
+                in_reply_to TEXT,
+                campaign_email_message_id INTEGER,
+                from_addr TEXT,
+                subject TEXT,
+                snippet TEXT,
+                received_at INTEGER NOT NULL,
+                FOREIGN KEY (campaign_email_message_id) REFERENCES campaign_email_messages(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_email_replies_in_reply_to
+                ON email_replies(in_reply_to);
+            CREATE INDEX IF NOT EXISTS idx_campaign_email_messages_message_id
+                ON campaign_email_messages(message_id);
             """
+        )
+        _ensure_columns(
+            con,
+            "campaigns",
+            {
+                "email_prompt": "TEXT",
+                "email_system_prompt": "TEXT",
+                "email_model": "TEXT",
+                "email_status": "TEXT DEFAULT 'idle'",
+            },
         )
         _ensure_columns(
             con,
@@ -282,11 +362,8 @@ def init_db() -> None:
         )
         # One-time: bucket every enriched person into a business category.
         _assign_categories(con, only_missing=True)
-        con.execute(
-            "UPDATE campaign_companies SET status='pending', updated_at=? "
-            "WHERE status IN ('generating', 'improving')",
-            (now(),),
-        )
+    recover_stuck_campaign_companies(on_boot=True)
+    recover_stuck_email_jobs(on_boot=True)
 
 
 def _assign_categories(con: sqlite3.Connection, only_missing: bool = True) -> int:
@@ -1919,6 +1996,14 @@ def campaign_version_dir(campaign_id: int, orgnr: str, version: int) -> str:
     return os.path.join(CAMPAIGNS_DIR, str(campaign_id), orgnr, f"v{version}")
 
 
+def campaign_shots_dir(campaign_id: int, orgnr: str) -> str:
+    return os.path.join(CAMPAIGNS_DIR, str(campaign_id), orgnr, "shots")
+
+
+def campaign_email_work_dir(campaign_id: int, orgnr: str) -> str:
+    return os.path.join(CAMPAIGNS_DIR, str(campaign_id), orgnr, "email_work")
+
+
 def list_campaign_candidate_companies(
     *,
     view: str = "main",
@@ -2149,6 +2234,35 @@ def update_campaign_prompt(
     return get_campaign(campaign_id)
 
 
+def update_campaign_email_prompt(
+    campaign_id: int,
+    *,
+    email_prompt: str,
+    email_system_prompt: str | None = None,
+    email_model: str | None = None,
+) -> dict[str, Any] | None:
+    ts = now()
+    with connect() as con:
+        row = con.execute("SELECT id FROM campaigns WHERE id=?", (campaign_id,)).fetchone()
+        if not row:
+            return None
+        con.execute(
+            """
+            UPDATE campaigns
+            SET email_prompt=?, email_system_prompt=?, email_model=?, updated_at=?
+            WHERE id=?
+            """,
+            (
+                email_prompt.strip(),
+                (email_system_prompt or "").strip() or None,
+                (email_model or "").strip() or None,
+                ts,
+                campaign_id,
+            ),
+        )
+    return get_campaign(campaign_id)
+
+
 def create_campaign(
     *,
     name: str,
@@ -2282,6 +2396,84 @@ def queue_campaign(campaign_id: int) -> int:
                 (row["id"], ts),
             )
         return cur.rowcount
+
+
+def recover_stuck_campaign_companies(*, on_boot: bool = False) -> int:
+    """Finalize or re-queue campaign jobs stuck in generating/improving."""
+    from datetime import datetime
+
+    ts = now()
+    stale_before = ts - STALE_CAMPAIGN_JOB_SECONDS
+    actions = 0
+    with connect() as con:
+        rows = [
+            dict(r)
+            for r in con.execute(
+                """
+                SELECT cc.*, c.base_prompt
+                FROM campaign_companies cc
+                JOIN campaigns c ON c.id = cc.campaign_id
+                WHERE cc.status IN ('generating', 'improving')
+                """
+            ).fetchall()
+        ]
+
+    for row in rows:
+        campaign_id = row["campaign_id"]
+        orgnr = row["orgnr"]
+        row_id = row["id"]
+        current_version = int(row.get("current_version") or 0)
+        next_version = current_version + 1
+        version_dir = campaign_version_dir(campaign_id, orgnr, next_version)
+
+        if os.path.isfile(os.path.join(version_dir, "index.html")):
+            event_type = "improved" if row["status"] == "improving" else "generated"
+            ts_label = datetime.now().strftime("%Y-%m-%d %H:%M")
+            preview_path = f"/api/campaigns/{campaign_id}/companies/{orgnr}/site/index.html"
+            message = (
+                f"Website {'improved' if event_type == 'improved' else 'generated'} "
+                f"at {ts_label} (v{next_version}). Preview: {preview_path}"
+            )
+            if row["status"] == "improving":
+                prompt_used = (row.get("refine_prompt") or "").strip()
+            else:
+                prompt_used = row.get("base_prompt") or ""
+            finish_campaign_company_success(
+                row_id,
+                agent_id=row.get("agent_id"),
+                version=next_version,
+                version_dir=version_dir,
+                prompt_used=prompt_used,
+                event_type=event_type,
+                message=message,
+            )
+            actions += 1
+            continue
+
+        updated_at = int(row.get("updated_at") or 0)
+        if not on_boot and updated_at > stale_before:
+            continue
+
+        new_status = "improve_requested" if row["status"] == "improving" else "pending"
+        with connect() as con:
+            updated = con.execute(
+                """
+                UPDATE campaign_companies
+                SET status=?, updated_at=?, error=NULL
+                WHERE id=? AND status IN ('generating', 'improving')
+                """,
+                (new_status, now(), row_id),
+            )
+            if updated.rowcount:
+                con.execute(
+                    """
+                    INSERT INTO campaign_events (campaign_company_id, type, message, created_at)
+                    VALUES (?, 'queued', ?, ?)
+                    """,
+                    (row_id, "Re-queued after interrupted site job", now()),
+                )
+                actions += 1
+    return actions
 
 
 def claim_pending_campaign_company() -> dict[str, Any] | None:
@@ -2445,6 +2637,22 @@ def finish_campaign_company_error(company_row_id: int, error: str) -> None:
         )
 
 
+def log_campaign_email_sent(campaign_id: int, orgnr: str, to: str, subject: str) -> None:
+    company = get_campaign_company(campaign_id, orgnr)
+    if not company:
+        return
+    ts = now()
+    msg = f"Email sent to {to}: {(subject or '')[:200]}"
+    with connect() as con:
+        con.execute(
+            """
+            INSERT INTO campaign_events (campaign_company_id, type, message, created_at)
+            VALUES (?, 'email_sent', ?, ?)
+            """,
+            (company["id"], msg, ts),
+        )
+
+
 def list_campaign_events(campaign_company_id: int) -> list[dict[str, Any]]:
     with connect() as con:
         rows = con.execute(
@@ -2466,3 +2674,711 @@ def get_campaign_site_dir(campaign_id: int, orgnr: str, version: int | None = No
     if ver <= 0:
         return None
     return campaign_version_dir(campaign_id, orgnr, ver)
+
+
+# ------------------------------------------------------------------ CRM email marketing
+
+
+def _decode_email_message(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    if out.get("draft_json"):
+        try:
+            out["draft_json"] = json.loads(out["draft_json"])
+        except (TypeError, ValueError):
+            pass
+    out["selected"] = bool(out.get("selected"))
+    return out
+
+
+def orgnr_already_emailed(orgnr: str) -> bool:
+    with connect() as con:
+        row = con.execute(
+            "SELECT 1 FROM email_ledger WHERE orgnr=? LIMIT 1",
+            (orgnr,),
+        ).fetchone()
+    return row is not None
+
+
+def is_email_suppressed(email: str, orgnr: str | None = None) -> bool:
+    addr = (email or "").strip().lower()
+    if not addr:
+        return False
+    with connect() as con:
+        if orgnr:
+            row = con.execute(
+                """
+                SELECT 1 FROM email_suppression
+                WHERE LOWER(email)=? OR orgnr=?
+                LIMIT 1
+                """,
+                (addr, orgnr),
+            ).fetchone()
+        else:
+            row = con.execute(
+                "SELECT 1 FROM email_suppression WHERE LOWER(email)=? LIMIT 1",
+                (addr,),
+            ).fetchone()
+    return row is not None
+
+
+def ensure_email_messages(campaign_id: int) -> int:
+    """Create idle email rows for generated companies; apply orgnr dedup default."""
+    ts = now()
+    emailed = set()
+    with connect() as con:
+        for row in con.execute("SELECT orgnr FROM email_ledger").fetchall():
+            emailed.add(row["orgnr"])
+        companies = con.execute(
+            """
+            SELECT cc.id, cc.orgnr, cc.company_snapshot, cc.current_version
+            FROM campaign_companies cc
+            WHERE cc.campaign_id=? AND cc.status='generated' AND cc.current_version > 0
+            """,
+            (campaign_id,),
+        ).fetchall()
+        added = 0
+        for cc in companies:
+            existing = con.execute(
+                "SELECT id FROM campaign_email_messages WHERE campaign_id=? AND orgnr=?",
+                (campaign_id, cc["orgnr"]),
+            ).fetchone()
+            if existing:
+                continue
+            snap = cc["company_snapshot"]
+            try:
+                snap_obj = json.loads(snap) if isinstance(snap, str) else (snap or {})
+            except (TypeError, ValueError):
+                snap_obj = {}
+            recipient = (snap_obj.get("email") or "").strip()
+            already = cc["orgnr"] in emailed
+            selected = 0 if already else 1
+            con.execute(
+                """
+                INSERT INTO campaign_email_messages
+                    (campaign_id, orgnr, campaign_company_id, status, selected,
+                     recipient_email, created_at, updated_at)
+                VALUES (?, ?, ?, 'idle', ?, ?, ?, ?)
+                """,
+                (campaign_id, cc["orgnr"], cc["id"], selected, recipient or None, ts, ts),
+            )
+            added += 1
+    return added
+
+
+def list_campaign_email_messages(campaign_id: int) -> list[dict[str, Any]]:
+    with connect() as con:
+        rows = con.execute(
+            """
+            SELECT m.*,
+                   CASE WHEN el.orgnr IS NOT NULL THEN 1 ELSE 0 END AS already_emailed
+            FROM campaign_email_messages m
+            LEFT JOIN email_ledger el ON el.orgnr = m.orgnr
+            WHERE m.campaign_id=?
+            ORDER BY m.orgnr ASC
+            """,
+            (campaign_id,),
+        ).fetchall()
+    out = []
+    for r in rows:
+        item = _decode_email_message(dict(r))
+        item["already_emailed"] = bool(item.get("already_emailed"))
+        cc = get_campaign_company(campaign_id, item["orgnr"])
+        item["has_site"] = bool(cc and (cc.get("current_version") or 0) > 0)
+        snap = (cc or {}).get("company_snapshot") or {}
+        item["company_name"] = snap.get("company_name") or item["orgnr"]
+        out.append(item)
+    return out
+
+
+def get_campaign_email_message(campaign_id: int, orgnr: str) -> dict[str, Any] | None:
+    with connect() as con:
+        row = con.execute(
+            """
+            SELECT m.*,
+                   CASE WHEN el.orgnr IS NOT NULL THEN 1 ELSE 0 END AS already_emailed
+            FROM campaign_email_messages m
+            LEFT JOIN email_ledger el ON el.orgnr = m.orgnr
+            WHERE m.campaign_id=? AND m.orgnr=?
+            """,
+            (campaign_id, orgnr),
+        ).fetchone()
+    if not row:
+        return None
+    item = _decode_email_message(dict(row))
+    item["already_emailed"] = bool(item.get("already_emailed"))
+    return item
+
+
+def email_counts(campaign_id: int) -> dict[str, int]:
+    with connect() as con:
+        rows = con.execute(
+            """
+            SELECT status, COUNT(*) AS n
+            FROM campaign_email_messages
+            WHERE campaign_id=?
+            GROUP BY status
+            """,
+            (campaign_id,),
+        ).fetchall()
+        selected = con.execute(
+            "SELECT COUNT(*) AS n FROM campaign_email_messages WHERE campaign_id=? AND selected=1",
+            (campaign_id,),
+        ).fetchone()["n"]
+    counts = {r["status"]: r["n"] for r in rows}
+    return {
+        "idle": counts.get("idle", 0),
+        "draft_pending": counts.get("draft_pending", 0),
+        "draft_generating": counts.get("draft_generating", 0),
+        "draft_ready": counts.get("draft_ready", 0),
+        "draft_error": counts.get("draft_error", 0),
+        "excluded": counts.get("excluded", 0),
+        "queued": counts.get("queued", 0),
+        "sending": counts.get("sending", 0),
+        "sent": counts.get("sent", 0),
+        "failed": counts.get("failed", 0),
+        "bounced": counts.get("bounced", 0),
+        "replied": counts.get("replied", 0),
+        "selected": selected,
+    }
+
+
+def queue_email_drafts(campaign_id: int) -> int:
+    ts = now()
+    with connect() as con:
+        cur = con.execute(
+            """
+            UPDATE campaign_email_messages
+            SET status='draft_pending', updated_at=?, error=NULL
+            WHERE campaign_id=? AND status IN ('idle', 'draft_error')
+            """,
+            (ts, campaign_id),
+        )
+        con.execute(
+            "UPDATE campaigns SET email_status='generating', updated_at=? WHERE id=?",
+            (ts, campaign_id),
+        )
+        return cur.rowcount
+
+
+def queue_email_send(campaign_id: int) -> int:
+    ts = now()
+    heal_no_recipient_failures(campaign_id)
+    with connect() as con:
+        cur = con.execute(
+            """
+            UPDATE campaign_email_messages
+            SET status='queued', queued_at=?, updated_at=?, error=NULL
+            WHERE campaign_id=? AND selected=1 AND status='draft_ready'
+            """,
+            (ts, ts, campaign_id),
+        )
+        con.execute(
+            "UPDATE campaigns SET email_status='sending', updated_at=? WHERE id=?",
+            (ts, campaign_id),
+        )
+        return cur.rowcount
+
+
+def heal_no_recipient_failures(campaign_id: int | None = None) -> int:
+    """Reset failed no-recipient rows when simulation can deliver to review inbox."""
+    import email_settings
+
+    settings = email_settings.load_settings()
+    if not settings.get("simulation_enabled"):
+        return 0
+    to_addr = (settings.get("simulation_to") or "").strip()
+    if not to_addr:
+        to_addr = (os.environ.get("EMAIL_SIMULATION_TO") or "ghamari2004@gmail.com").strip()
+    if not to_addr:
+        return 0
+    ts = now()
+    with connect() as con:
+        if campaign_id is not None:
+            cur = con.execute(
+                """
+                UPDATE campaign_email_messages
+                SET status='draft_ready', error=NULL, updated_at=?
+                WHERE campaign_id=? AND status='failed' AND error='No recipient email'
+                """,
+                (ts, campaign_id),
+            )
+        else:
+            cur = con.execute(
+                """
+                UPDATE campaign_email_messages
+                SET status='draft_ready', error=NULL, updated_at=?
+                WHERE status='failed' AND error='No recipient email'
+                """,
+                (ts,),
+            )
+        return cur.rowcount
+
+
+def set_email_message_selected(
+    campaign_id: int, orgnr: str, selected: bool
+) -> dict[str, Any] | None:
+    ts = now()
+    with connect() as con:
+        updated = con.execute(
+            """
+            UPDATE campaign_email_messages
+            SET selected=?, updated_at=?
+            WHERE campaign_id=? AND orgnr=?
+            """,
+            (1 if selected else 0, ts, campaign_id, orgnr),
+        )
+        if not updated.rowcount:
+            return None
+    return get_campaign_email_message(campaign_id, orgnr)
+
+
+def set_email_messages_selected_bulk(
+    campaign_id: int, orgnrs: list[str] | None, selected: bool
+) -> int:
+    ts = now()
+    with connect() as con:
+        if orgnrs is None:
+            cur = con.execute(
+                """
+                UPDATE campaign_email_messages
+                SET selected=?, updated_at=?
+                WHERE campaign_id=? AND status NOT IN ('sent','sending','queued')
+                """,
+                (1 if selected else 0, ts, campaign_id),
+            )
+        else:
+            placeholders = ",".join("?" * len(orgnrs))
+            cur = con.execute(
+                f"""
+                UPDATE campaign_email_messages
+                SET selected=?, updated_at=?
+                WHERE campaign_id=? AND orgnr IN ({placeholders})
+                """,
+                [1 if selected else 0, ts, campaign_id, *orgnrs],
+            )
+        return cur.rowcount
+
+
+def request_email_refine(campaign_id: int, orgnr: str, prompt: str) -> dict[str, Any] | None:
+    ts = now()
+    clean = prompt.strip()
+    if not clean:
+        return None
+    with connect() as con:
+        row = con.execute(
+            "SELECT id, status FROM campaign_email_messages WHERE campaign_id=? AND orgnr=?",
+            (campaign_id, orgnr),
+        ).fetchone()
+        if not row:
+            return None
+        if row["status"] in ("draft_pending", "sending", "queued"):
+            return None
+        con.execute(
+            """
+            UPDATE campaign_email_messages
+            SET status='draft_pending', refine_prompt=?, updated_at=?, error=NULL
+            WHERE id=?
+            """,
+            (clean, ts, row["id"]),
+        )
+    return get_campaign_email_message(campaign_id, orgnr)
+
+
+def recover_stuck_email_jobs(*, on_boot: bool = False) -> int:
+    ts = now()
+    actions = 0
+    with connect() as con:
+        r1 = con.execute(
+            """
+            UPDATE campaign_email_messages
+            SET status='queued', updated_at=?
+            WHERE status='sending'
+            """,
+            (ts,),
+        )
+        actions += r1.rowcount
+        r2 = con.execute(
+            """
+            UPDATE campaign_email_messages
+            SET status='draft_pending', updated_at=?
+            WHERE status='draft_generating'
+            """,
+            (ts,),
+        )
+        actions += r2.rowcount
+        if on_boot:
+            r3 = con.execute(
+                """
+                UPDATE campaign_email_messages
+                SET status='idle', updated_at=?
+                WHERE status='draft_pending'
+                """,
+                (ts,),
+            )
+            actions += r3.rowcount
+    heal_no_recipient_failures()
+    return actions
+
+
+def claim_pending_email_draft() -> dict[str, Any] | None:
+    ts = now()
+    with connect() as con:
+        row = con.execute(
+            """
+            SELECT m.*, c.email_prompt, c.email_system_prompt, c.email_model,
+                   c.agent_model, cc.company_snapshot, cc.current_version
+            FROM campaign_email_messages m
+            JOIN campaigns c ON c.id = m.campaign_id
+            JOIN campaign_companies cc ON cc.id = m.campaign_company_id
+            WHERE m.status='draft_pending'
+            ORDER BY m.updated_at ASC, m.id ASC
+            LIMIT 1
+            """
+        ).fetchone()
+        if not row:
+            return None
+        job = dict(row)
+        updated = con.execute(
+            """
+            UPDATE campaign_email_messages
+            SET status='draft_generating', updated_at=?
+            WHERE id=? AND status='draft_pending'
+            """,
+            (ts, job["id"]),
+        )
+        if updated.rowcount != 1:
+            return None
+        job["status"] = "draft_generating"
+        if job.get("company_snapshot"):
+            try:
+                job["company_snapshot"] = json.loads(job["company_snapshot"])
+            except (TypeError, ValueError):
+                pass
+        return job
+
+
+def finish_email_draft_success(
+    message_id: int,
+    *,
+    agent_id: str | None,
+    subject: str,
+    body_html: str,
+    body_text: str,
+    draft_json: dict[str, Any],
+) -> None:
+    ts = now()
+    with connect() as con:
+        con.execute(
+            """
+            UPDATE campaign_email_messages
+            SET status='draft_ready', agent_id=?, subject=?, body_html=?, body_text=?,
+                draft_json=?, refine_prompt=NULL, updated_at=?, error=NULL
+            WHERE id=?
+            """,
+            (
+                agent_id,
+                subject,
+                body_html,
+                body_text,
+                json.dumps(draft_json, ensure_ascii=False),
+                ts,
+                message_id,
+            ),
+        )
+        row = con.execute(
+            "SELECT campaign_id FROM campaign_email_messages WHERE id=?",
+            (message_id,),
+        ).fetchone()
+        if row:
+            remaining = con.execute(
+                """
+                SELECT COUNT(*) AS n FROM campaign_email_messages
+                WHERE campaign_id=? AND status IN ('draft_pending','draft_generating')
+                """,
+                (row["campaign_id"],),
+            ).fetchone()["n"]
+            if remaining == 0:
+                con.execute(
+                    "UPDATE campaigns SET email_status='ready', updated_at=? WHERE id=?",
+                    (ts, row["campaign_id"]),
+                )
+
+
+def finish_email_draft_error(message_id: int, error: str) -> None:
+    ts = now()
+    msg = (error or "Unknown error")[:500]
+    with connect() as con:
+        con.execute(
+            """
+            UPDATE campaign_email_messages
+            SET status='draft_error', error=?, updated_at=?
+            WHERE id=?
+            """,
+            (msg, ts, message_id),
+        )
+
+
+def _simulation_send_to() -> str:
+    import email_settings
+
+    settings = email_settings.load_settings()
+    if not settings.get("simulation_enabled"):
+        return ""
+    to_addr = (settings.get("simulation_to") or "").strip()
+    if not to_addr:
+        to_addr = (os.environ.get("EMAIL_SIMULATION_TO") or "ghamari2004@gmail.com").strip()
+    return to_addr
+
+
+def _email_simulation_active() -> tuple[bool, str]:
+    sim_to = _simulation_send_to()
+    return bool(sim_to), sim_to
+
+
+def claim_sendable_email() -> dict[str, Any] | None:
+    ts = now()
+    sim_to = _simulation_send_to()
+    with connect() as con:
+        rows = con.execute(
+            """
+            SELECT m.*, c.name AS campaign_name
+            FROM campaign_email_messages m
+            JOIN campaigns c ON c.id = m.campaign_id
+            WHERE m.status='queued' AND m.selected=1
+            ORDER BY m.queued_at ASC, m.id ASC
+            LIMIT 20
+            """
+        ).fetchall()
+        for row in rows:
+            job = dict(row)
+            recipient = (job.get("recipient_email") or "").strip()
+            if not recipient and not sim_to:
+                con.execute(
+                    """
+                    UPDATE campaign_email_messages
+                    SET status='failed', error='No recipient email', updated_at=?
+                    WHERE id=?
+                    """,
+                    (ts, job["id"]),
+                )
+                continue
+            if not sim_to and is_email_suppressed(recipient, job.get("orgnr")):
+                con.execute(
+                    """
+                    UPDATE campaign_email_messages
+                    SET status='failed', error='Recipient suppressed', updated_at=?
+                    WHERE id=?
+                    """,
+                    (ts, job["id"]),
+                )
+                continue
+            updated = con.execute(
+                """
+                UPDATE campaign_email_messages
+                SET status='sending', updated_at=?
+                WHERE id=? AND status='queued'
+                """,
+                (ts, job["id"]),
+            )
+            if updated.rowcount == 1:
+                return job
+    return None
+
+
+def finish_email_sent(
+    message_id: int,
+    *,
+    message_id_header: str,
+    recipient: str,
+    orgnr: str,
+    campaign_id: int,
+    simulation: bool = False,
+    original_recipient: str = "",
+) -> None:
+    ts = now()
+    with connect() as con:
+        con.execute(
+            """
+            UPDATE campaign_email_messages
+            SET status='sent', message_id=?, sent_at=?, updated_at=?, error=NULL
+            WHERE id=?
+            """,
+            (message_id_header, ts, ts, message_id),
+        )
+        if not simulation:
+            existing = con.execute(
+                "SELECT orgnr FROM email_ledger WHERE orgnr=?",
+                (orgnr,),
+            ).fetchone()
+            if existing:
+                con.execute(
+                    """
+                    UPDATE email_ledger
+                    SET recipient_email=?, last_campaign_id=?, send_count=send_count+1, last_sent_at=?
+                    WHERE orgnr=?
+                    """,
+                    (recipient, campaign_id, ts, orgnr),
+                )
+            else:
+                con.execute(
+                    """
+                    INSERT INTO email_ledger
+                        (orgnr, recipient_email, first_campaign_id, last_campaign_id, send_count, last_sent_at)
+                    VALUES (?, ?, ?, ?, 1, ?)
+                    """,
+                    (orgnr, recipient, campaign_id, campaign_id, ts),
+                )
+        cc_row = con.execute(
+            "SELECT campaign_company_id FROM campaign_email_messages WHERE id=?",
+            (message_id,),
+        ).fetchone()
+        if cc_row:
+            if simulation:
+                orig = (original_recipient or "").strip() or "—"
+                event_msg = f"Simulation email sent to {recipient} (company: {orig})"
+            else:
+                event_msg = f"Email sent to {recipient}"
+            con.execute(
+                """
+                INSERT INTO campaign_events (campaign_company_id, type, message, created_at)
+                VALUES (?, 'email_sent', ?, ?)
+                """,
+                (cc_row["campaign_company_id"], event_msg, ts),
+            )
+        pending = con.execute(
+            """
+            SELECT COUNT(*) AS n FROM campaign_email_messages
+            WHERE campaign_id=? AND status IN ('queued','sending')
+            """,
+            (campaign_id,),
+        ).fetchone()["n"]
+        if pending == 0:
+            con.execute(
+                "UPDATE campaigns SET email_status='sent', updated_at=? WHERE id=?",
+                (ts, campaign_id),
+            )
+
+
+def finish_email_failed(message_id: int, error: str, *, hard_bounce: bool = False) -> None:
+    ts = now()
+    msg = (error or "Unknown error")[:500]
+    status = "bounced" if hard_bounce else "failed"
+    with connect() as con:
+        row = con.execute(
+            "SELECT recipient_email, orgnr, campaign_id FROM campaign_email_messages WHERE id=?",
+            (message_id,),
+        ).fetchone()
+        con.execute(
+            """
+            UPDATE campaign_email_messages
+            SET status=?, error=?, updated_at=?
+            WHERE id=?
+            """,
+            (status, msg, ts, message_id),
+        )
+        if hard_bounce and row and row["recipient_email"]:
+            add_email_suppression(row["recipient_email"], row["orgnr"], "hard_bounce")
+
+
+def add_email_suppression(email: str, orgnr: str | None, reason: str) -> None:
+    ts = now()
+    addr = (email or "").strip().lower()
+    if not addr:
+        return
+    with connect() as con:
+        con.execute(
+            """
+            INSERT OR IGNORE INTO email_suppression (email, orgnr, reason, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (addr, orgnr, reason, ts),
+        )
+
+
+def record_email_reply(
+    *,
+    campaign_email_message_id: int,
+    message_id: str | None,
+    in_reply_to: str | None,
+    from_addr: str,
+    subject: str,
+    snippet: str,
+    received_at: int,
+) -> None:
+    with connect() as con:
+        con.execute(
+            """
+            INSERT INTO email_replies
+                (message_id, in_reply_to, campaign_email_message_id, from_addr, subject, snippet, received_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                message_id,
+                in_reply_to,
+                campaign_email_message_id,
+                from_addr,
+                subject[:500],
+                snippet[:1000],
+                received_at,
+            ),
+        )
+        con.execute(
+            """
+            UPDATE campaign_email_messages
+            SET status='replied', updated_at=?
+            WHERE id=? AND status IN ('sent','replied')
+            """,
+            (now(), campaign_email_message_id),
+        )
+        row = con.execute(
+            "SELECT campaign_company_id FROM campaign_email_messages WHERE id=?",
+            (campaign_email_message_id,),
+        ).fetchone()
+        if row:
+            con.execute(
+                """
+                INSERT INTO campaign_events (campaign_company_id, type, message, created_at)
+                VALUES (?, 'email_replied', ?, ?)
+                """,
+                (row["campaign_company_id"], snippet[:500], received_at),
+            )
+
+
+def find_email_message_by_message_id(message_id: str) -> dict[str, Any] | None:
+    clean = (message_id or "").strip().strip("<>")
+    if not clean:
+        return None
+    with connect() as con:
+        row = con.execute(
+            """
+            SELECT * FROM campaign_email_messages
+            WHERE message_id=? OR message_id=? OR message_id LIKE ?
+            LIMIT 1
+            """,
+            (message_id, f"<{clean}>", f"%{clean}%"),
+        ).fetchone()
+    return _decode_email_message(dict(row)) if row else None
+
+
+def count_emails_sent_today() -> int:
+    from datetime import datetime, timezone
+    start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    start_ts = int(start.timestamp())
+    with connect() as con:
+        row = con.execute(
+            """
+            SELECT COUNT(*) AS n FROM campaign_email_messages
+            WHERE status='sent' AND sent_at >= ?
+            """,
+            (start_ts,),
+        ).fetchone()
+    return int(row["n"] or 0)
+
+
+def get_last_email_sent_at() -> int | None:
+    with connect() as con:
+        row = con.execute(
+            "SELECT MAX(sent_at) AS t FROM campaign_email_messages WHERE status='sent'"
+        ).fetchone()
+    t = row["t"] if row else None
+    return int(t) if t else None

@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import db
+import email_agent
 import env_loader  # noqa: F401 — load .env at startup
+import mailer
 import site_agent
 import worker
 from names import IRANIAN_FIRST_NAMES, IRANIAN_SURNAMES
@@ -57,6 +60,31 @@ class UpdateCampaignBody(BaseModel):
 
 class RefineCampaignBody(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000)
+
+
+class SendCampaignEmailBody(BaseModel):
+    subject: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=20000)
+    to: Optional[str] = Field(default=None, max_length=200)
+
+
+class UpdateCampaignEmailBody(BaseModel):
+    email_prompt: str = Field(min_length=1, max_length=8000)
+    email_system_prompt: Optional[str] = Field(default=None, max_length=4000)
+    email_model: Optional[str] = Field(default=None, max_length=80)
+
+
+class EmailSelectBody(BaseModel):
+    selected: bool = True
+
+
+class EmailSelectBulkBody(BaseModel):
+    orgnrs: Optional[list[str]] = None
+    selected: bool = True
+
+
+class EmailSimulationBody(BaseModel):
+    enabled: bool
 
 
 def _campaign_filters_from_query(
@@ -108,6 +136,7 @@ def startup() -> None:
     db.backfill_person_aggregates()
     # Auto-queue company deep-enrichment for all existing favorites.
     db.queue_favorite_company_deep()
+    db.heal_no_recipient_failures()
     worker.start_worker()
 
 
@@ -551,6 +580,152 @@ def api_campaign_agent_status():
     return site_agent.agent_status()
 
 
+@app.get("/api/campaigns/email-status")
+def api_campaign_email_status(verify: bool = Query(default=False)):
+    return mailer.email_status(verify=verify)
+
+
+@app.get("/api/campaigns/email/simulation")
+def api_get_email_simulation():
+    return mailer.simulation_info()
+
+
+@app.patch("/api/campaigns/email/simulation")
+def api_set_email_simulation(body: EmailSimulationBody):
+    return mailer.set_simulation_enabled(body.enabled)
+
+
+@app.patch("/api/campaigns/{campaign_id}/email-prompt")
+def api_update_campaign_email_prompt(campaign_id: int, body: UpdateCampaignEmailBody):
+    campaign = db.update_campaign_email_prompt(
+        campaign_id,
+        email_prompt=body.email_prompt,
+        email_system_prompt=body.email_system_prompt,
+        email_model=body.email_model,
+    )
+    if not campaign:
+        raise HTTPException(404, "campaign not found")
+    return campaign
+
+
+@app.post("/api/campaigns/{campaign_id}/email/generate-drafts")
+def api_generate_email_drafts(campaign_id: int):
+    campaign = db.get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(404, "campaign not found")
+    if not (campaign.get("email_prompt") or "").strip():
+        raise HTTPException(400, "save an email prompt before generating drafts")
+    status = mailer.email_status()
+    if not status["ready"]:
+        detail = "; ".join(status["issues"]) or "SMTP not configured"
+        raise HTTPException(400, detail)
+    db.ensure_email_messages(campaign_id)
+    queued = db.queue_email_drafts(campaign_id)
+    return {
+        "ok": True,
+        "queued": queued,
+        "counts": db.email_counts(campaign_id),
+    }
+
+
+@app.get("/api/campaigns/{campaign_id}/email/messages")
+def api_list_email_messages(campaign_id: int):
+    campaign = db.get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(404, "campaign not found")
+    db.ensure_email_messages(campaign_id)
+    db.heal_no_recipient_failures(campaign_id)
+    sim = mailer.simulation_info()
+    messages = []
+    for msg in db.list_campaign_email_messages(campaign_id):
+        stored = msg.get("recipient_email") or ""
+        msg["simulation"] = sim
+        msg["display_recipient"] = mailer.display_recipient(stored)
+        msg["original_recipient"] = stored
+        messages.append(msg)
+    return {
+        "messages": messages,
+        "counts": db.email_counts(campaign_id),
+        "rate": mailer.rate_status(),
+        "simulation": sim,
+    }
+
+
+@app.get("/api/campaigns/{campaign_id}/email/status")
+def api_campaign_email_queue_status(campaign_id: int):
+    campaign = db.get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(404, "campaign not found")
+    return {
+        "email_status": campaign.get("email_status"),
+        "counts": db.email_counts(campaign_id),
+        "rate": mailer.rate_status(),
+        "smtp": mailer.email_status(),
+        "simulation": mailer.simulation_info(),
+    }
+
+
+@app.get("/api/campaigns/{campaign_id}/companies/{orgnr}/email/preview")
+def api_email_preview(campaign_id: int, orgnr: str):
+    msg = db.get_campaign_email_message(campaign_id, orgnr)
+    if not msg:
+        raise HTTPException(404, "email message not found")
+    if msg.get("status") not in ("draft_ready", "queued", "sending", "sent", "replied") and not msg.get("body_html"):
+        raise HTTPException(404, "no draft preview yet")
+    from_addr = mailer.smtp_config().get("from") or ""
+    html = email_agent.preview_html_for_message(
+        campaign_id,
+        orgnr,
+        msg,
+        from_addr=from_addr,
+    )
+    return HTMLResponse(html)
+
+
+@app.post("/api/campaigns/{campaign_id}/companies/{orgnr}/email/refine")
+def api_email_refine(campaign_id: int, orgnr: str, body: RefineCampaignBody):
+    msg = db.request_email_refine(campaign_id, orgnr, body.prompt)
+    if not msg:
+        raise HTTPException(400, "cannot refine this email now")
+    return {"ok": True, "message": msg}
+
+
+@app.post("/api/campaigns/{campaign_id}/companies/{orgnr}/email/select")
+def api_email_select(campaign_id: int, orgnr: str, body: EmailSelectBody):
+    msg = db.set_email_message_selected(campaign_id, orgnr, body.selected)
+    if not msg:
+        raise HTTPException(404, "email message not found")
+    return {"ok": True, "message": msg}
+
+
+@app.post("/api/campaigns/{campaign_id}/email/select-bulk")
+def api_email_select_bulk(campaign_id: int, body: EmailSelectBulkBody):
+    updated = db.set_email_messages_selected_bulk(
+        campaign_id, body.orgnrs, body.selected
+    )
+    return {"ok": True, "updated": updated}
+
+
+@app.post("/api/campaigns/{campaign_id}/email/send")
+def api_queue_email_send(campaign_id: int):
+    campaign = db.get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(404, "campaign not found")
+    status = mailer.email_status()
+    if not status["ready"]:
+        detail = "; ".join(status["issues"]) or "SMTP not configured"
+        raise HTTPException(400, detail)
+    queued = db.queue_email_send(campaign_id)
+    if queued == 0:
+        raise HTTPException(400, "no selected draft-ready messages to send")
+    return {
+        "ok": True,
+        "queued": queued,
+        "counts": db.email_counts(campaign_id),
+        "rate": mailer.rate_status(),
+    }
+
+
 @app.get("/api/campaigns/{campaign_id}")
 def api_get_campaign(campaign_id: int):
     campaign = db.get_campaign(campaign_id)
@@ -588,6 +763,32 @@ def api_campaign_refine(campaign_id: int, orgnr: str, body: RefineCampaignBody):
     if not company:
         raise HTTPException(400, "cannot refine this company now")
     return {"ok": True, "company": company}
+
+
+@app.post("/api/campaigns/{campaign_id}/companies/{orgnr}/email")
+def api_campaign_send_email(campaign_id: int, orgnr: str, body: SendCampaignEmailBody):
+    company = db.get_campaign_company(campaign_id, orgnr)
+    if not company:
+        raise HTTPException(404, "company not found in campaign")
+    status = mailer.email_status()
+    if not status["ready"]:
+        detail = "; ".join(status["issues"]) or "SMTP not configured"
+        raise HTTPException(400, detail)
+    snap = company.get("company_snapshot") or {}
+    if isinstance(snap, str):
+        try:
+            snap = json.loads(snap)
+        except Exception:
+            snap = {}
+    recipient = (body.to or snap.get("email") or "").strip()
+    if not recipient:
+        raise HTTPException(400, "no recipient email — add one in the send form or enrich company data")
+    try:
+        mailer.send_email(to=recipient, subject=body.subject, body=body.body)
+    except Exception as e:
+        raise HTTPException(502, f"email send failed: {e}") from e
+    db.log_campaign_email_sent(campaign_id, orgnr, recipient, body.subject)
+    return {"ok": True, "to": recipient}
 
 
 @app.get("/api/campaigns/{campaign_id}/companies/{orgnr}/site/{path:path}")
