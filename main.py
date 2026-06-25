@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 import db
 import worker
-from names import IRANIAN_FIRST_NAMES
+from names import IRANIAN_FIRST_NAMES, IRANIAN_SURNAMES
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -48,8 +48,10 @@ def startup() -> None:
     db.release_stuck_enriching_persons()
     db.retry_enrich_errors_for_active_searches()
     db.backfill_person_aggregates()
-    # Auto-queue company deep-enrichment for all existing favorites.
+    # Auto-queue deep-enrichment for all existing favorites: companies first
+    # (higher priority), then personal profiles once company work is drained.
     db.queue_favorite_company_deep()
+    db.queue_favorite_person_deep()
     worker.start_worker()
 
 
@@ -189,16 +191,24 @@ def api_restore_person(person_id: str):
 def api_set_person_favorite(person_id: str, body: FavoriteBody):
     if not db.set_person_favorite(person_id, body.favorite):
         raise HTTPException(404, "person not found")
-    # Auto-queue company deep-enrichment when a person is favorited.
+    # Auto-queue deep-enrichment when a person is favorited: companies first,
+    # then personal profiles (the person phase waits until companies drain).
     if body.favorite:
         db.queue_favorite_company_deep(person_id)
+        db.queue_favorite_person_deep(person_id)
     return {"ok": True, "person_id": person_id, "is_favorite": body.favorite}
 
 
 @app.post("/api/favorites/company-deep-enrich")
 def api_company_deep_enrich_all():
     queued = db.queue_favorite_company_deep()
-    return {"ok": True, "queued": queued, **db.company_deep_status_counts()}
+    person_queued = db.queue_favorite_person_deep()
+    return {
+        "ok": True,
+        "queued": queued,
+        "person_queued": person_queued,
+        **db.company_deep_status_counts(),
+    }
 
 
 @app.post("/api/persons/{person_id}/company-deep-enrich")
@@ -207,14 +217,20 @@ def api_company_deep_enrich_one(person_id: str):
     if not person:
         raise HTTPException(404, "person not found")
     if not person.get("is_favorite"):
-        raise HTTPException(400, "company deep-enrichment is for favorites only")
+        raise HTTPException(400, "deep-enrichment is for favorites only")
     db.queue_favorite_company_deep(person_id)
+    db.queue_favorite_person_deep(person_id)
     return {"ok": True, "person_id": person_id, **db.company_deep_status_counts()}
 
 
 @app.get("/api/company-deep/status")
 def api_company_deep_status():
     return db.company_deep_status_counts()
+
+
+@app.get("/api/person-deep/status")
+def api_person_deep_status():
+    return db.person_deep_status_counts()
 
 
 @app.post("/api/people/score")
@@ -236,6 +252,32 @@ def api_add_search(body: AddSearchBody):
     if sid is None:
         raise HTTPException(400, "invalid query")
     return db.get_search(sid)
+
+
+@app.post("/api/surnames/seed")
+def api_seed_surnames():
+    """Queue the curated Iranian surnames for listing + auto-enrichment.
+
+    Surname searches list and then flow straight into enrichment. Persons are
+    de-duplicated globally, so anyone already captured by a first-name search is
+    not added again. Re-running is safe: existing searches are left untouched.
+    """
+    new_searches = []
+    already = 0
+    for surname in IRANIAN_SURNAMES:
+        existing = db.find_search_by_query(surname)
+        if existing:
+            already += 1
+            continue
+        sid = db.add_search(surname, source="surname", exact_match=True, auto_enrich=True)
+        if sid is not None:
+            new_searches.append(db.get_search(sid))
+    return {
+        "queued_new": len(new_searches),
+        "already_existing": already,
+        "total_surnames": len(IRANIAN_SURNAMES),
+        "searches": new_searches,
+    }
 
 
 @app.post("/api/searches/bulk")

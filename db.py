@@ -151,6 +151,7 @@ def init_db() -> None:
                 "scan_completed_mode": "TEXT",
                 "scanned_pages": "INTEGER DEFAULT 0",
                 "enrich_queued_at": "INTEGER",
+                "auto_enrich": "INTEGER DEFAULT 0",
             },
         )
         _ensure_columns(
@@ -179,6 +180,12 @@ def init_db() -> None:
                 "company_deep_error": "TEXT",
                 "company_deep_attempts": "INTEGER DEFAULT 0",
                 "company_deep_next_retry_at": "INTEGER",
+                "person_deep_status": "TEXT DEFAULT 'idle'",
+                "person_deep_queued_at": "INTEGER",
+                "person_deep_updated_at": "INTEGER",
+                "person_deep_error": "TEXT",
+                "person_deep_attempts": "INTEGER DEFAULT 0",
+                "person_deep_next_retry_at": "INTEGER",
             },
         )
         _ensure_columns(
@@ -197,10 +204,16 @@ def init_db() -> None:
         con.execute("UPDATE searches SET status='queued' WHERE status='listing'")
         con.execute("UPDATE persons SET detail_status='pending' WHERE detail_status='enriching'")
         con.execute("UPDATE persons SET company_deep_status='queued' WHERE company_deep_status='running'")
+        con.execute("UPDATE persons SET person_deep_status='queued' WHERE person_deep_status='running'")
         # Resume any due retries on boot.
         con.execute(
             "UPDATE persons SET company_deep_status='queued' "
             "WHERE company_deep_status='retry' AND COALESCE(company_deep_next_retry_at,0) <= ?",
+            (now(),),
+        )
+        con.execute(
+            "UPDATE persons SET person_deep_status='queued' "
+            "WHERE person_deep_status='retry' AND COALESCE(person_deep_next_retry_at,0) <= ?",
             (now(),),
         )
 
@@ -212,7 +225,12 @@ def _ensure_columns(con: sqlite3.Connection, table: str, columns: dict[str, str]
             con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
 
-def add_search(query: str, source: str = "manual", exact_match: bool = True) -> int | None:
+def add_search(
+    query: str,
+    source: str = "manual",
+    exact_match: bool = True,
+    auto_enrich: bool = False,
+) -> int | None:
     q = query.strip()
     if not q:
         return None
@@ -224,15 +242,30 @@ def add_search(query: str, source: str = "manual", exact_match: bool = True) -> 
                 """
                 INSERT INTO searches
                     (query, status, total_persons, persons_listed, details_done,
-                     exact_match, source, scan_mode, created_at, updated_at)
-                VALUES (?, 'queued', 0, 0, 0, ?, ?, 'fast', ?, ?)
+                     exact_match, source, scan_mode, auto_enrich, created_at, updated_at)
+                VALUES (?, 'queued', 0, 0, 0, ?, ?, 'fast', ?, ?, ?)
                 """,
-                (q, 1 if exact_match else 0, source, ts, ts),
+                (q, 1 if exact_match else 0, source, 1 if auto_enrich else 0, ts, ts),
             )
             return cur.lastrowid
         except sqlite3.IntegrityError:
             row = con.execute("SELECT id FROM searches WHERE query = ?", (q,)).fetchone()
             return row["id"] if row else None
+
+
+def person_owner_search(person_id: str) -> int | None:
+    """Return the search_id that already owns this person, or None if unseen.
+
+    Used for global de-duplication: a person captured by one search is never
+    re-added (or re-enriched) under another search — each person appears once.
+    """
+    if not person_id:
+        return None
+    with connect() as con:
+        row = con.execute(
+            "SELECT search_id FROM persons WHERE person_id = ?", (person_id,)
+        ).fetchone()
+        return int(row["search_id"]) if row else None
 
 
 def get_search(search_id: int) -> dict[str, Any] | None:
@@ -788,6 +821,7 @@ def get_person(person_id: str) -> dict[str, Any] | None:
             for r in (c.get("roles") or [])
         )
         person["company_deep_status"] = row["company_deep_status"] if "company_deep_status" in row.keys() else None
+        person["person_deep_status"] = row["person_deep_status"] if "person_deep_status" in row.keys() else None
         intel_row = con.execute(
             "SELECT * FROM person_intel WHERE person_id = ?", (person_id,)
         ).fetchone()
@@ -1050,6 +1084,156 @@ def company_deep_status_counts() -> dict[str, int]:
         ).fetchall()
     counts = {r["status"]: r["c"] for r in rows}
     counts["favorites_total"] = sum(counts.values())
+    return counts
+
+
+# ---------------------------------------------------------------- person deep enrich
+#
+# Person enrichment is a SECOND phase that runs strictly behind companies:
+# companies are more important, so a person is only picked up once no favorite
+# has outstanding company-phase work (queued/running/retry). This yields the
+# engines to company jobs and processes people one-by-one in the gaps.
+
+def queue_favorite_person_deep(person_id: str | None = None, queue_at: int | None = None) -> int:
+    """Queue person deep-enrichment for favorites only (never others)."""
+    ts = queue_at or now()
+    with connect() as con:
+        if person_id:
+            cur = con.execute(
+                """
+                UPDATE persons
+                SET person_deep_status='queued', person_deep_queued_at=?,
+                    person_deep_error=NULL, person_deep_updated_at=?
+                WHERE person_id=? AND COALESCE(is_favorite,0)=1
+                """,
+                (ts, ts, person_id),
+            )
+            return cur.rowcount
+        cur = con.execute(
+            """
+            UPDATE persons
+            SET person_deep_status='queued', person_deep_queued_at=?,
+                person_deep_error=NULL, person_deep_updated_at=?
+            WHERE COALESCE(is_favorite,0)=1
+              AND COALESCE(person_deep_status,'idle') NOT IN ('queued','running','done')
+            """,
+            (ts, ts),
+        )
+        return cur.rowcount
+
+
+def count_pending_company_phase() -> int:
+    """Favorites still needing company-phase work (queued/running/retry)."""
+    with connect() as con:
+        row = con.execute(
+            """
+            SELECT COUNT(*) AS c FROM persons
+            WHERE COALESCE(is_favorite,0)=1
+              AND COALESCE(company_deep_status,'idle') IN ('queued','running','retry')
+            """
+        ).fetchone()
+        return int(row["c"] or 0)
+
+
+def claim_person_deep_person() -> dict[str, Any] | None:
+    """Claim one favorite for person enrichment — ONLY when companies are clear.
+
+    Hard gate: returns nothing while any favorite still has company-phase work,
+    so companies always finish first. The claimed person must itself have its
+    company phase done.
+    """
+    with connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        pending = con.execute(
+            """
+            SELECT COUNT(*) AS c FROM persons
+            WHERE COALESCE(is_favorite,0)=1
+              AND COALESCE(company_deep_status,'idle') IN ('queued','running','retry')
+            """
+        ).fetchone()
+        if int(pending["c"] or 0) > 0:
+            return None
+        row = con.execute(
+            """
+            SELECT * FROM persons
+            WHERE person_deep_status='queued' AND COALESCE(is_favorite,0)=1
+              AND COALESCE(company_deep_status,'idle')='done'
+            ORDER BY COALESCE(person_deep_queued_at,0) ASC, updated_at ASC
+            LIMIT 1
+            """
+        ).fetchone()
+        if not row:
+            return None
+        con.execute(
+            "UPDATE persons SET person_deep_status='running', person_deep_updated_at=? WHERE person_id=?",
+            (now(), row["person_id"]),
+        )
+        return dict(row)
+
+
+def set_person_deep_status(person_id: str, status: str, error: str | None = None) -> None:
+    with connect() as con:
+        con.execute(
+            """
+            UPDATE persons
+            SET person_deep_status=?, person_deep_error=?, person_deep_updated_at=?
+            WHERE person_id=?
+            """,
+            (status, error, now(), person_id),
+        )
+
+
+def mark_person_deep_retry(person_id: str, next_retry_at: int, attempts: int) -> None:
+    with connect() as con:
+        con.execute(
+            """
+            UPDATE persons
+            SET person_deep_status='retry', person_deep_updated_at=?,
+                person_deep_next_retry_at=?, person_deep_attempts=?
+            WHERE person_id=?
+            """,
+            (now(), next_retry_at, attempts, person_id),
+        )
+
+
+def finalize_person_deep(person_id: str, attempts: int) -> None:
+    with connect() as con:
+        con.execute(
+            """
+            UPDATE persons
+            SET person_deep_status='done', person_deep_updated_at=?, person_deep_attempts=?
+            WHERE person_id=?
+            """,
+            (now(), attempts, person_id),
+        )
+
+
+def requeue_due_person_deep_retries() -> int:
+    with connect() as con:
+        cur = con.execute(
+            """
+            UPDATE persons SET person_deep_status='queued'
+            WHERE person_deep_status='retry'
+              AND COALESCE(is_favorite,0)=1
+              AND COALESCE(person_deep_next_retry_at,0) <= ?
+            """,
+            (now(),),
+        )
+        return cur.rowcount
+
+
+def person_deep_status_counts() -> dict[str, int]:
+    with connect() as con:
+        rows = con.execute(
+            """
+            SELECT COALESCE(person_deep_status,'idle') AS status, COUNT(*) AS c
+            FROM persons WHERE COALESCE(is_favorite,0)=1
+            GROUP BY COALESCE(person_deep_status,'idle')
+            """
+        ).fetchall()
+    counts = {r["status"]: r["c"] for r in rows}
+    counts["favorites_total"] = sum(counts.values())
+    counts["company_phase_pending"] = count_pending_company_phase()
     return counts
 
 

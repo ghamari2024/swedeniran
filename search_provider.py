@@ -77,12 +77,32 @@ def _load_dotenv() -> None:
 _load_dotenv()
 
 # Global politeness: minimum seconds between ANY two outbound search requests.
-_MIN_INTERVAL = float(os.environ.get("SWEDENIRAN_SEARCH_MIN_INTERVAL", "3.5"))
-_COOLDOWN = float(os.environ.get("SWEDENIRAN_SEARCH_COOLDOWN", "120"))
+# Defaults are deliberately high: this runs a slow, keyless, low-volume pipeline
+# (a handful of favorites per day) where reliability matters far more than speed.
+# Large gaps keep us under the free engines' rate limits so jobs actually return
+# data instead of being throttled to empty.
+_MIN_INTERVAL = float(os.environ.get("SWEDENIRAN_SEARCH_MIN_INTERVAL", "8.0"))
+_COOLDOWN = float(os.environ.get("SWEDENIRAN_SEARCH_COOLDOWN", "300"))
 
 _rate_lock = threading.Lock()
 _last_request_at = 0.0
 _engine_cooldown: dict[str, float] = {}
+
+# Keyless engines we rotate across (must match _keyless_search below).
+_KEYLESS_ENGINES = ("mojeek", "ddg_html", "searxng", "ddg_lite")
+
+
+def any_engine_available() -> bool:
+    """True if a search backend is ready to use right now.
+
+    A paid key is always considered available; otherwise at least one keyless
+    engine must be off cooldown. Workers poll this so they idle (instead of
+    storing empty results) while every free engine is being rate-limited.
+    """
+    if os.environ.get("SERPAPI_KEY") or os.environ.get("BRAVE_SEARCH_API_KEY"):
+        return True
+    now = time.time()
+    return any(_engine_cooldown.get(name, 0.0) <= now for name in _KEYLESS_ENGINES)
 
 
 def _throttle() -> None:

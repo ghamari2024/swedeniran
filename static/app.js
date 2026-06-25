@@ -706,19 +706,27 @@ function setPeopleView(view) {
 
 async function refreshCompanyDeepStatus() {
   try {
-    const s = await api("/api/company-deep/status");
+    const [s, p] = await Promise.all([
+      api("/api/company-deep/status"),
+      api("/api/person-deep/status").catch(() => null),
+    ]);
     const el = $("#companyDeepStatus");
     if (!el) return;
-    const done = s.done || 0;
-    const queued = s.queued || 0;
-    const running = s.running || 0;
-    const error = s.error || 0;
     const total = s.favorites_total || 0;
-    const parts = [`${done}/${total} done`];
-    if (running) parts.push(`${running} running`);
-    if (queued) parts.push(`${queued} queued`);
-    if (error) parts.push(`${error} error`);
-    el.textContent = parts.join(" · ");
+    const cParts = [`Companies ${s.done || 0}/${total}`];
+    if (s.running) cParts.push(`${s.running} running`);
+    if (s.queued) cParts.push(`${s.queued} queued`);
+    if (s.retry) cParts.push(`${s.retry} retry`);
+    let text = cParts.join(" · ");
+    if (p) {
+      const pParts = [`Persons ${p.done || 0}/${p.favorites_total || 0}`];
+      if (p.running) pParts.push(`${p.running} running`);
+      if (p.queued) pParts.push(`${p.queued} queued`);
+      if (p.retry) pParts.push(`${p.retry} retry`);
+      if (p.company_phase_pending) pParts.push(`waiting on companies (${p.company_phase_pending})`);
+      text += "  |  " + pParts.join(" · ");
+    }
+    el.textContent = text;
   } catch (err) {
     /* ignore */
   }
