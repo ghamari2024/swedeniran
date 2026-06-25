@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -12,6 +13,13 @@ import company_intel
 import db
 import person_intel
 import search_provider
+<<<<<<< HEAD
+=======
+import site_agent
+import email_agent
+import mailer
+import screenshots
+>>>>>>> 889baf6c6b853446e64f902bb6c39ec653cb4602
 
 log = logging.getLogger("worker")
 
@@ -19,12 +27,34 @@ _lock = threading.Lock()
 _running = False
 _paused = threading.Event()
 LIST_WORKERS = int(os.environ.get("SWEDENIRAN_LIST_WORKERS", "6"))
+<<<<<<< HEAD
 ENRICH_WORKERS = int(os.environ.get("SWEDENIRAN_ENRICH_WORKERS", "3"))
+=======
+# Primary enrichment (allabolag company data). Each allabolag fetch is
+# latency-bound (~3.5s server-side) and allabolag does NOT throttle a single IP
+# even at 24+ concurrent requests (measured: no 429s, flat wall-time), so
+# throughput scales with worker count up to a point. Past ~24 the per-person DB
+# write bursts (replace_person_companies + score_person + recount_search)
+# contend on WAL's single writer and net throughput drops, so 24 is the
+# measured sweet spot. Override with SWEDENIRAN_ENRICH_WORKERS / *_DELAY.
+ENRICH_WORKERS = int(os.environ.get("SWEDENIRAN_ENRICH_WORKERS", "24"))
+# Per-person pause after each person is enriched (seconds).
+ENRICH_PERSON_DELAY = float(os.environ.get("SWEDENIRAN_ENRICH_PERSON_DELAY", "0.05"))
+# Per-company pause between company-contact fetches (seconds).
+ENRICH_COMPANY_DELAY = float(os.environ.get("SWEDENIRAN_ENRICH_COMPANY_DELAY", "0.04"))
+>>>>>>> 889baf6c6b853446e64f902bb6c39ec653cb4602
 # Deep-enrichment runs deliberately slow and single-file on the free keyless
 # engines: one company worker and one person worker so we never hammer the
 # search backends in parallel. Companies are processed before people.
 COMPANY_DEEP_WORKERS = int(os.environ.get("SWEDENIRAN_COMPANY_DEEP_WORKERS", "1"))
+<<<<<<< HEAD
 PERSON_DEEP_WORKERS = int(os.environ.get("SWEDENIRAN_PERSON_DEEP_WORKERS", "1"))
+=======
+PERSON_DEEP_WORKERS = int(os.environ.get("SWEDENIRAN_PERSON_DEEP_WORKERS", "0"))
+CAMPAIGN_WORKERS = int(os.environ.get("SWEDENIRAN_CAMPAIGN_WORKERS", "2"))
+EMAIL_DRAFT_WORKERS = int(os.environ.get("SWEDENIRAN_EMAIL_DRAFT_WORKERS", "2"))
+IMAP_POLL_SECONDS = int(os.environ.get("IMAP_POLL_SECONDS", "300"))
+>>>>>>> 889baf6c6b853446e64f902bb6c39ec653cb4602
 # Seconds a deep worker idles when every search engine is rate-limited. We wait
 # rather than burn through favorites storing empty results.
 ENGINE_WAIT = int(os.environ.get("SWEDENIRAN_ENGINE_WAIT", "45"))
@@ -48,10 +78,26 @@ def start_worker() -> None:
     for index in range(PERSON_DEEP_WORKERS):
         threading.Thread(target=_person_deep_loop, name=f"swedeniran-person-deep-{index+1}", daemon=True).start()
     threading.Thread(target=_company_deep_retry_loop, name="swedeniran-company-deep-retry", daemon=True).start()
+<<<<<<< HEAD
     threading.Thread(target=_person_deep_retry_loop, name="swedeniran-person-deep-retry", daemon=True).start()
     log.info(
         "background workers started (list=%s, enrich=%s, company_deep=%s, person_deep=%s)",
         LIST_WORKERS, ENRICH_WORKERS, COMPANY_DEEP_WORKERS, PERSON_DEEP_WORKERS,
+=======
+    if PERSON_DEEP_WORKERS > 0:
+        for index in range(PERSON_DEEP_WORKERS):
+            threading.Thread(target=_person_deep_loop, name=f"swedeniran-person-deep-{index+1}", daemon=True).start()
+        threading.Thread(target=_person_deep_retry_loop, name="swedeniran-person-deep-retry", daemon=True).start()
+    for index in range(CAMPAIGN_WORKERS):
+        threading.Thread(target=_campaign_loop, name=f"swedeniran-campaign-{index+1}", daemon=True).start()
+    for index in range(EMAIL_DRAFT_WORKERS):
+        threading.Thread(target=_email_draft_loop, name=f"swedeniran-email-draft-{index+1}", daemon=True).start()
+    threading.Thread(target=_email_send_loop, name="swedeniran-email-send", daemon=True).start()
+    threading.Thread(target=_imap_poll_loop, name="swedeniran-imap-poll", daemon=True).start()
+    log.info(
+        "background workers started (list=%s, enrich=%s, company_deep=%s, person_deep=%s, campaign=%s, email_draft=%s)",
+        LIST_WORKERS, ENRICH_WORKERS, COMPANY_DEEP_WORKERS, PERSON_DEEP_WORKERS, CAMPAIGN_WORKERS, EMAIL_DRAFT_WORKERS,
+>>>>>>> 889baf6c6b853446e64f902bb6c39ec653cb4602
     )
 
 
@@ -224,7 +270,7 @@ def _enrich_search(search: dict) -> None:
 
     _enrich_person(person)
     db.recount_search(sid)
-    time.sleep(0.4)
+    time.sleep(ENRICH_PERSON_DELAY)
 
 
 def _enrich_person(person: dict) -> None:
@@ -241,7 +287,8 @@ def _enrich_person(person: dict) -> None:
             cached = db.get_cached_company(orgnr)
             contact = _cached_fields(cached) if cached else allabolag.get_company_contact(orgnr)
             row.update({key: value for key, value in contact.items() if value is not None})
-            time.sleep(0.18)
+            if not cached:
+                time.sleep(ENRICH_COMPANY_DELAY)
         db.replace_person_companies(pid, rows)
         db.set_person_detail_status(pid, "done")
         try:
@@ -484,3 +531,276 @@ def _cached_fields(row: dict | None) -> dict:
         "registration_date": row.get("registration_date"),
         "foundation_year": row.get("foundation_year"),
     }
+
+
+# ----------------------------------------------------------------- CRM campaigns
+
+def _campaign_loop() -> None:
+    while True:
+        try:
+            if _paused.is_set():
+                time.sleep(0.8)
+                continue
+            recovered = db.recover_stuck_campaign_companies()
+            if recovered:
+                log.info("recovered %s stuck campaign job(s)", recovered)
+            job = db.claim_pending_campaign_company()
+            if not job:
+                time.sleep(2.0)
+                continue
+            _run_campaign_company(job)
+        except Exception:
+            log.exception("campaign worker loop error")
+            time.sleep(4)
+
+
+def _run_campaign_company(job: dict) -> None:
+    row_id = job["id"]
+    campaign_id = job["campaign_id"]
+    orgnr = job["orgnr"]
+    work_dir = job.get("work_dir") or db.campaign_work_dir(campaign_id, orgnr)
+    model = job.get("agent_model")
+    company = job.get("company_snapshot") or {}
+    if isinstance(company, str):
+        try:
+            company = json.loads(company)
+        except Exception:
+            company = {}
+
+    name = company.get("company_name") or orgnr
+    log.info("campaign site job %s for %r (campaign %s, status=%s)", orgnr, name, campaign_id, job["status"])
+
+    try:
+        if job["status"] == "improving":
+            refine = (job.get("refine_prompt") or "").strip()
+            if not refine:
+                raise RuntimeError("Missing refine prompt")
+            agent_id, status = site_agent.refine_site(
+                work_dir,
+                job.get("agent_id"),
+                refine,
+                model=model,
+            )
+            prompt_used = refine
+            event_type = "improved"
+        else:
+            prompt = site_agent.build_generation_prompt(
+                base_prompt=job.get("base_prompt") or "",
+                system_prompt=job.get("agent_system_prompt"),
+                company=company,
+            )
+            agent_id, status = site_agent.generate_site(work_dir, prompt, model=model)
+            prompt_used = job.get("base_prompt") or ""
+            event_type = "generated"
+
+        if status != "finished":
+            raise RuntimeError(f"Agent run ended with status: {status}")
+
+        current_version = int(job.get("current_version") or 0)
+        new_version = current_version + 1
+        version_dir = db.campaign_version_dir(campaign_id, orgnr, new_version)
+        site_agent.snapshot_work_dir(work_dir, version_dir)
+
+        if not site_agent.site_has_index(version_dir):
+            raise RuntimeError("Agent finished but index.html was not created")
+
+        from datetime import datetime
+        ts_label = datetime.now().strftime("%Y-%m-%d %H:%M")
+        preview_path = f"/api/campaigns/{campaign_id}/companies/{orgnr}/site/index.html"
+        message = (
+            f"Website {'improved' if event_type == 'improved' else 'generated'} "
+            f"at {ts_label} (v{new_version}). Preview: {preview_path}"
+        )
+        db.finish_campaign_company_success(
+            row_id,
+            agent_id=agent_id,
+            version=new_version,
+            version_dir=version_dir,
+            prompt_used=prompt_used,
+            event_type=event_type,
+            message=message,
+        )
+        log.info("campaign site done %s v%s (%s)", orgnr, new_version, event_type)
+    except Exception as e:
+        log.warning("campaign site failed %s: %s", orgnr, e)
+        db.finish_campaign_company_error(row_id, str(e))
+
+
+def _email_draft_loop() -> None:
+    while True:
+        try:
+            if _paused.is_set():
+                time.sleep(0.8)
+                continue
+            db.recover_stuck_email_jobs()
+            job = db.claim_pending_email_draft()
+            if not job:
+                time.sleep(2.0)
+                continue
+            _run_email_draft(job)
+        except Exception:
+            log.exception("email draft worker loop error")
+            time.sleep(4)
+
+
+def _run_email_draft(job: dict) -> None:
+    row_id = job["id"]
+    campaign_id = job["campaign_id"]
+    orgnr = job["orgnr"]
+    company = job.get("company_snapshot") or {}
+    if isinstance(company, str):
+        try:
+            company = json.loads(company)
+        except Exception:
+            company = {}
+
+    name = company.get("company_name") or orgnr
+    log.info("email draft job %s for %r (campaign %s)", orgnr, name, campaign_id)
+
+    try:
+        version = int(job.get("current_version") or 0)
+        if version <= 0:
+            raise RuntimeError("No generated website yet")
+
+        site_dir = db.campaign_version_dir(campaign_id, orgnr, version)
+        if not site_agent.site_has_index(site_dir):
+            raise RuntimeError("Site index.html missing")
+
+        preview_path = f"/api/campaigns/{campaign_id}/companies/{orgnr}/site/index.html"
+        public_base = (os.environ.get("PUBLIC_BASE_URL") or "http://127.0.0.1:8787").rstrip("/")
+        preview_url = f"{public_base}{preview_path}"
+
+        shots_dir = db.campaign_shots_dir(campaign_id, orgnr)
+        html_path = os.path.join(site_dir, "index.html")
+        try:
+            screenshots.capture_site_screenshots(html_path, shots_dir)
+        except Exception as e:
+            log.warning("screenshots failed for %s: %s", orgnr, e)
+
+        work_dir = db.campaign_email_work_dir(campaign_id, orgnr)
+        base_prompt = job.get("email_prompt") or job.get("base_prompt") or ""
+        if job.get("refine_prompt"):
+            agent_id, raw_draft = email_agent.refine_email_draft(
+                work_dir,
+                job.get("agent_id"),
+                job["refine_prompt"],
+                model=job.get("email_model") or job.get("agent_model"),
+            )
+            prompt_used = job["refine_prompt"]
+        else:
+            if not base_prompt.strip():
+                raise RuntimeError("Save an email prompt before generating drafts")
+            prompt = email_agent.build_email_prompt(
+                base_prompt=base_prompt,
+                system_prompt=job.get("email_system_prompt"),
+                company=company,
+                preview_url=preview_url,
+            )
+            try:
+                agent_id, raw_draft = email_agent.generate_email_draft(
+                    work_dir,
+                    prompt,
+                    model=job.get("email_model") or job.get("agent_model"),
+                )
+            except Exception as agent_err:
+                log.warning("email agent failed for %s, using fallback: %s", orgnr, agent_err)
+                agent_id = None
+                raw_draft = email_agent.fallback_draft(company, preview_url)
+
+        draft = email_agent.normalize_draft(raw_draft, preview_url)
+        # Only the hero shot is embedded (render uses shots[0]); extra inline
+        # images raise the image-to-text ratio and trigger Gmail Promotions.
+        shot_files = screenshots.list_shot_files(shots_dir)[:1]
+        shot_meta = [(cid, label) for cid, path in shot_files for label in [cid.replace("shot_", "").title()]]
+        from_addr = mailer.smtp_config().get("from") or ""
+        body_html = email_agent.render_email_html(draft, from_addr=from_addr, shots=shot_meta)
+        body_text = email_agent.draft_to_plain_text(draft)
+
+        db.finish_email_draft_success(
+            row_id,
+            agent_id=agent_id,
+            subject=draft["subject"],
+            body_html=body_html,
+            body_text=body_text,
+            draft_json=draft,
+        )
+        log.info("email draft ready %s", orgnr)
+    except Exception as e:
+        log.warning("email draft failed %s: %s", orgnr, e)
+        db.finish_email_draft_error(row_id, str(e))
+
+
+def _email_send_loop() -> None:
+    while True:
+        try:
+            if _paused.is_set():
+                time.sleep(0.8)
+                continue
+            ok, reason = mailer.can_send_now()
+            if not ok:
+                time.sleep(min(30, max(5, mailer.rate_status().get("wait_seconds") or 10)))
+                continue
+            job = db.claim_sendable_email()
+            if not job:
+                time.sleep(3.0)
+                continue
+            _run_email_send(job)
+        except Exception:
+            log.exception("email send worker loop error")
+            time.sleep(4)
+
+
+def _run_email_send(job: dict) -> None:
+    row_id = job["id"]
+    campaign_id = job["campaign_id"]
+    orgnr = job["orgnr"]
+    stored_recipient = (job.get("recipient_email") or "").strip()
+    send_to, sim = mailer.resolve_send_to(stored_recipient)
+    if not send_to:
+        db.finish_email_failed(row_id, "No recipient email", hard_bounce=False)
+        return
+    log.info(
+        "sending email to %s (%s)%s",
+        send_to,
+        orgnr,
+        " [SIMULATION]" if sim else "",
+    )
+    try:
+        shots_dir = db.campaign_shots_dir(campaign_id, orgnr)
+        inline = [(cid, path, "jpeg") for cid, path in screenshots.list_shot_files(shots_dir)[:1]]
+        subject = job.get("subject") or "Webbplatsförslag"
+        if sim:
+            subject = f"[SIM · {orgnr}] {subject}"
+        msg_id = mailer.send_campaign_email(
+            to=send_to,
+            subject=subject,
+            body_text=job.get("body_text") or "",
+            body_html=job.get("body_html") or "",
+            inline_images=inline or None,
+        )
+        db.finish_email_sent(
+            row_id,
+            message_id_header=msg_id,
+            recipient=send_to,
+            orgnr=orgnr,
+            campaign_id=campaign_id,
+            simulation=sim,
+            original_recipient=stored_recipient,
+        )
+        log.info("email sent %s -> %s", orgnr, send_to)
+    except Exception as e:
+        hard = mailer.is_hard_bounce_error(e)
+        db.finish_email_failed(row_id, str(e), hard_bounce=hard)
+        log.warning("email send failed %s: %s", orgnr, e)
+
+
+def _imap_poll_loop() -> None:
+    while True:
+        try:
+            if _paused.is_set():
+                time.sleep(1.0)
+                continue
+            mailer.poll_imap_inbox()
+        except Exception:
+            log.exception("imap poll error")
+        time.sleep(IMAP_POLL_SECONDS)

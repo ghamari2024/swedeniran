@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import re
 import unicodedata
 import time
@@ -34,7 +35,7 @@ class _Redirect308Handler(urllib.request.HTTPRedirectHandler):
 _opener = urllib.request.build_opener(_Redirect308Handler())
 
 
-def _fetch(url: str, retries: int = 2, timeout: int = 25) -> str:
+def _fetch(url: str, retries: int = 5, timeout: int = 25) -> str:
     last_err: Exception | None = None
     for attempt in range(retries):
         try:
@@ -51,12 +52,15 @@ def _fetch(url: str, retries: int = 2, timeout: int = 25) -> str:
         except urllib.error.HTTPError as e:
             last_err = e
             if e.code == 429:
-                time.sleep(20 * (attempt + 1))
+                # Throttled. Moderate backoff with jitter so parallel enrich
+                # workers desync instead of retrying in lockstep. Kept short so
+                # a single 429 doesn't idle a worker for tens of seconds.
+                time.sleep(min(15, 4 * (attempt + 1)) + random.uniform(0, 2))
             else:
-                time.sleep(3 * (attempt + 1))
+                time.sleep(3 * (attempt + 1) + random.uniform(0, 1))
         except Exception as e:
             last_err = e
-            time.sleep(3 * (attempt + 1))
+            time.sleep(3 * (attempt + 1) + random.uniform(0, 1))
     raise RuntimeError(f"fetch failed: {url}: {last_err}")
 
 

@@ -12,6 +12,7 @@
       <nav class="tabs">
         <button id="peopleTab" class="tab active">List</button>
         <button id="commandTab" class="tab">Command Center</button>
+        <button id="crmTab" class="tab">CRM</button>
       </nav>
     </header>
 
@@ -22,6 +23,8 @@
         <button id="peopleViewAuditor" class="view-tab" data-view="auditor">Auditor</button>
         <button id="peopleViewFavorites" class="view-tab" data-view="favorites">Favorites</button>
       </div>
+
+      <div id="categoryBar" class="category-bar"></div>
 
       <div id="favoritesActionBar" class="favorites-action-bar hidden">
         <div class="fav-bar-left">
@@ -198,6 +201,215 @@
         </aside>
       </div>
     </section>
+
+    <section id="crmPage" class="page">
+      <div class="crm-view-tabs">
+        <button id="crmViewNew" class="view-tab active" data-crm-view="new">New Campaign</button>
+        <button id="crmViewList" class="view-tab" data-crm-view="list">Campaigns</button>
+      </div>
+
+      <div id="crmNewPanel" class="crm-panel">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">Step 1</div>
+            <h2>New Campaign</h2>
+            <p class="muted">Pick a category, filter companies, select rows, and create the campaign.</p>
+          </div>
+        </div>
+        <div id="crmCategoryBar" class="category-bar"></div>
+
+        <div class="filter-toolbar">
+          <div class="filter-toolbar-left">
+            <input id="crmTextFilter" type="search" class="people-search" placeholder="Search company, industry, county..." autocomplete="off" spellcheck="false">
+            <button id="crmFilterToggle" class="ghost" type="button">Filters <span id="crmActiveFilterCount">0</span></button>
+            <button id="crmClearFiltersBtn" class="ghost clear-filters-btn hidden" type="button" title="Clear all filters" aria-label="Clear all filters">×</button>
+          </div>
+          <div class="filter-summary" id="crmFilterSummary">No filters active</div>
+        </div>
+
+        <div id="crmFilterPanel" class="filter-panel hidden">
+          <div class="filter-grid">
+            <label>Revenue min (MSEK)<input id="crmRevMin" type="number" min="0" step="0.1"></label>
+            <label>Revenue max (MSEK)<input id="crmRevMax" type="number" min="0" step="0.1"></label>
+            <label>Year<select id="crmYearFilter"><option value="">Any year</option></select></label>
+            <label>Industry<select id="crmIndustryFilter"><option value="">Any industry</option></select></label>
+            <label>County<select id="crmCountyFilter"><option value="">Any county</option></select></label>
+            <label>Company type<select id="crmTypeFilter"><option value="">Any type</option></select></label>
+            <label>Employees min<input id="crmEmpMin" type="number" min="0"></label>
+            <label>Employees max<input id="crmEmpMax" type="number" min="0"></label>
+            <label>Age min<input id="crmAgeMin" type="number" min="0"></label>
+            <label>Age max<input id="crmAgeMax" type="number" min="0"></label>
+            <label>Gender<select id="crmGenderFilter"><option value="">Any</option><option value="M">Male</option><option value="F">Female</option></select></label>
+          </div>
+          <div class="quick-filters">
+            <label><input id="crmHasRevenue" type="checkbox"> Has revenue</label>
+            <label><input id="crmActiveOnly" type="checkbox"> Active companies only</label>
+            <label><input id="crmHasEmployees" type="checkbox"> Has employees</label>
+          </div>
+        </div>
+
+        <div class="crm-new-toolbar card">
+          <label class="crm-name-field">Campaign name
+            <input id="crmCampaignName" type="text" placeholder="e.g. Dental clinics">
+          </label>
+          <div class="crm-new-actions">
+            <span id="crmSelectedCount" class="muted">0 selected</span>
+            <label class="crm-select-all"><input id="crmSelectAll" type="checkbox"> Select all on page</label>
+            <button id="crmCreateBtn" class="primary" type="button">Create campaign</button>
+          </div>
+        </div>
+
+        <div class="table-meta">
+          <span id="crmVisibleCount">0 companies</span>
+          <div class="pager">
+            <button id="crmFirstPageBtn" class="ghost small" type="button">First</button>
+            <button id="crmPrevPageBtn" class="ghost small" type="button">Prev</button>
+            <span id="crmPageStatus">Page 1</span>
+            <button id="crmNextPageBtn" class="ghost small" type="button">Next</button>
+            <button id="crmLastPageBtn" class="ghost small" type="button">Last</button>
+            <select id="crmPageSize">
+              <option value="50">50 / page</option>
+              <option value="100">100 / page</option>
+              <option value="250">250 / page</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-wrap people-table-wrap">
+          <table id="crmCompaniesPickTable">
+            <colgroup>
+              <col style="width: 4%">
+              <col style="width: 24%">
+              <col style="width: 14%">
+              <col style="width: 10%">
+              <col style="width: 12%">
+              <col style="width: 20%">
+              <col style="width: 16%">
+            </colgroup>
+            <thead>
+              <tr>
+                <th></th>
+                <th data-crm-sort="company_name">Company</th>
+                <th data-crm-sort="revenue_ksek">Revenue</th>
+                <th data-crm-sort="revenue_year">Year</th>
+                <th data-crm-sort="profit_ksek">Profit</th>
+                <th data-crm-sort="industries">Industries</th>
+                <th data-crm-sort="county">Location</th>
+              </tr>
+            </thead>
+            <tbody id="crmCompaniesPickBody">
+              <tr><td colspan="7" class="empty">Choose a category to list companies.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="crmListPanel" class="crm-panel hidden">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">Campaign queue</div>
+            <h2>Campaigns</h2>
+          </div>
+        </div>
+        <div id="crmCampaignsTable" class="card table-wrap"></div>
+      </div>
+
+      <div id="crmDetailPanel" class="crm-panel hidden">
+        <div class="page-head">
+          <div>
+            <button id="crmBackBtn" class="ghost small" type="button">&larr; Back</button>
+            <h2 id="crmDetailTitle">Campaign</h2>
+            <p id="crmDetailMeta" class="muted"></p>
+          </div>
+          <div class="command-actions">
+            <button id="crmSimulationToggle" class="crm-sim-toggle active" type="button" aria-pressed="true" aria-label="Simulation on" title="Simulation is ON — click to switch">
+              Simulation ON
+            </button>
+            <button id="crmRunBtn" class="primary" type="button">Run campaign</button>
+          </div>
+        </div>
+        <div class="crm-detail-tabs">
+          <button id="crmDetailTabSite" class="view-tab active" type="button" data-crm-detail-tab="site">Website</button>
+          <button id="crmDetailTabEmail" class="view-tab" type="button" data-crm-detail-tab="email">Email <span id="crmEmailTabSimBadge" class="crm-sim-badge hidden">Simulation</span></button>
+        </div>
+        <div id="crmSitePanel">
+          <div class="card crm-prompt-box">
+            <div id="crmAgentStatus" class="crm-agent-status hidden"></div>
+            <div class="eyebrow">Step 2 — Site prompt</div>
+            <label>Shared prompt (used for every company in this campaign)
+              <textarea id="crmDetailBasePrompt" rows="8" placeholder="Describe the responsive website you want built..."></textarea>
+            </label>
+            <label>Optional system prompt
+              <textarea id="crmDetailSystemPrompt" rows="3" placeholder="Extra style or brand rules for the agent"></textarea>
+            </label>
+            <button id="crmSavePromptBtn" class="ghost" type="button">Save prompt</button>
+            <span id="crmPromptHint" class="muted">Save the prompt before running the campaign.</span>
+          </div>
+          <div id="crmCompaniesTable" class="card table-wrap"></div>
+        </div>
+        <div id="crmEmailPanel" class="hidden">
+          <div id="crmEmailSimulationBanner" class="crm-sim-banner hidden" role="status">
+            <span class="crm-sim-badge">Simulation</span>
+            <span>All emails are sent to <strong id="crmEmailSimulationTo"></strong> for review. Company addresses in the database are unchanged.</span>
+          </div>
+          <div class="card crm-prompt-box">
+            <div id="crmEmailSmtpStatus" class="crm-agent-status hidden"></div>
+            <div id="crmEmailQueueStats" class="crm-email-stats muted"></div>
+            <div class="eyebrow">Email outreach prompt</div>
+            <label>Shared email prompt (personalized per company by AI)
+              <textarea id="crmDetailEmailPrompt" rows="6" placeholder="Describe the outreach tone, offer, and CTA..."></textarea>
+            </label>
+            <label>Optional system prompt
+              <textarea id="crmDetailEmailSystemPrompt" rows="2" placeholder="Extra rules for email copy"></textarea>
+            </label>
+            <div class="crm-email-toolbar">
+              <button id="crmSaveEmailPromptBtn" class="ghost" type="button">Save email prompt</button>
+              <button id="crmGenerateEmailDraftsBtn" class="ghost" type="button">Generate drafts</button>
+              <button id="crmSendEmailQueueBtn" class="primary" type="button">Send selected</button>
+            </div>
+            <span id="crmEmailPromptHint" class="muted">Generate drafts to preview personalized emails before sending.</span>
+          </div>
+          <div id="crmEmailMessagesTable" class="card table-wrap"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="emailPreviewOverlay" class="person-modal-overlay hidden" aria-hidden="true">
+    <div class="person-modal-card site-preview-card" role="dialog" aria-modal="true">
+      <div class="person-modal-header">
+        <div id="emailPreviewTitle">Email preview</div>
+        <button type="button" id="emailPreviewClose" class="person-modal-close" aria-label="Close">&times;</button>
+      </div>
+      <iframe id="emailPreviewFrame" class="site-preview-frame" title="Email preview"></iframe>
+    </div>
+  </div>
+
+  <div id="emailComposeOverlay" class="person-modal-overlay hidden" aria-hidden="true">
+    <div class="person-modal-card email-compose-card" role="dialog" aria-modal="true">
+      <div class="person-modal-header">
+        <div id="emailComposeTitle">Send email</div>
+        <button type="button" id="emailComposeClose" class="person-modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="email-compose-body">
+        <label>To<input id="emailComposeTo" type="email" autocomplete="off"></label>
+        <label>Subject<input id="emailComposeSubject" type="text" autocomplete="off"></label>
+        <label>Message<textarea id="emailComposeBody" rows="10"></textarea></label>
+        <div class="email-compose-actions">
+          <button id="emailComposeSend" class="primary" type="button">Send</button>
+          <span id="emailComposeHint" class="muted"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="sitePreviewOverlay" class="person-modal-overlay hidden" aria-hidden="true">
+    <div class="person-modal-card site-preview-card" role="dialog" aria-modal="true">
+      <div class="person-modal-header">
+        <div id="sitePreviewTitle">Site preview</div>
+        <button type="button" id="sitePreviewClose" class="person-modal-close" aria-label="Close">&times;</button>
+      </div>
+      <iframe id="sitePreviewFrame" class="site-preview-frame" title="Generated website preview"></iframe>
+    </div>
   </div>
 
   <div id="personModalOverlay" class="person-modal-overlay hidden" aria-hidden="true">
